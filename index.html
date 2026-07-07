@@ -1,0 +1,908 @@
+
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Comandas do Bar</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Kalam:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#e9e0c9; --card:#fdfaf1; --card2:#f4ecd8; --border:#d3c4a0;
+    --text:#2c2419; --muted:#8a7c5f; --accent:#3f8a4c; --accent-d:#2e6b3a;
+    --warn:#b9791f; --warn-d:#96611a; --danger:#b3392b; --danger-d:#8f2c21;
+    --blue:#2563eb;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;font-family:"Courier Prime","Courier New",monospace;background:var(--bg);color:var(--text);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+  }
+  header{position:sticky;top:0;background:var(--bg);z-index:10;padding:14px 16px 0;border-bottom:1px dashed var(--border);}
+  h1{font-family:"Kalam",cursive;font-size:22px;margin:0 0 12px;letter-spacing:.3px;}
+  nav{display:flex;gap:6px;}
+  nav button{flex:1;padding:10px 6px;border:none;background:transparent;color:var(--muted);font-family:inherit;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;border-radius:8px 8px 0 0;cursor:pointer;}
+  nav button.active{color:var(--text);background:var(--card);box-shadow:0 -1px 0 var(--border) inset;}
+  main{padding:16px;max-width:640px;margin:0 auto;padding-bottom:80px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px;box-shadow:0 2px 5px rgba(60,45,20,.12);}
+  .paper-card{transition:transform .15s;}
+  .paper-card:nth-child(odd){transform:rotate(-.6deg);border-radius:3px 10px 4px 9px;}
+  .paper-card:nth-child(even){transform:rotate(.5deg);border-radius:9px 4px 10px 3px;}
+  .paper-card:hover{transform:rotate(0deg);box-shadow:1px 4px 8px rgba(60,45,20,.2);}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  .muted{color:var(--muted);font-size:13px;}
+  .total{font-size:18px;font-weight:700;}
+  input,select,textarea{width:100%;padding:11px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-family:inherit;font-size:15px;}
+  input::placeholder,textarea::placeholder{color:var(--muted);}
+  textarea{resize:vertical;}
+  .help-box{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.5;}
+  .help-box code{background:var(--card2);padding:1px 4px;border-radius:3px;}
+  button.btn{padding:11px 14px;border-radius:6px;border:none;font-family:inherit;font-weight:700;font-size:14px;cursor:pointer;}
+  .btn-accent{background:var(--accent);color:#f3fbf0;}
+  .btn-accent:active{background:var(--accent-d);}
+  .btn-warn{background:var(--warn);color:#fff8ee;}
+  .btn-warn:active{background:var(--warn-d);}
+  .btn-danger{background:var(--danger);color:#fff;}
+  .btn-danger:active{background:var(--danger-d);}
+  .btn-ghost{background:var(--card2);color:var(--text);border:1px solid var(--border);}
+  .form-row{display:flex;gap:8px;margin-bottom:10px;}
+  .form-row input{flex:1;}
+  .item-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--border);}
+  .item-row:last-child{border-bottom:none;}
+  .empty{text-align:center;color:var(--muted);padding:30px 10px;}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:700;}
+  .badge-fiado{background:rgba(185,121,31,.15);color:var(--warn);}
+  .badge-paga{background:rgba(63,138,76,.15);color:var(--accent);}
+  .overlay{position:fixed;inset:0;background:rgba(30,22,10,.55);display:flex;align-items:flex-end;justify-content:center;z-index:50;}
+  .sheet{background:var(--bg);width:100%;max-width:640px;border-radius:16px 16px 0 0;padding:18px 16px 24px;max-height:88vh;overflow-y:auto;box-shadow:0 -4px 16px rgba(30,22,10,.25);}
+  .sheet h2{font-family:"Kalam",cursive;margin:0 0 4px;font-size:20px;}
+  .x{background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:4px 8px;}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2c2419;color:#f4ecd8;padding:10px 18px;border-radius:8px;font-size:14px;z-index:100;opacity:0;transition:opacity .3s;pointer-events:none;}
+  .toast.show{opacity:1;}
+  .payopts{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;}
+  .payopts button{flex:1;min-width:80px;}
+  .foot-actions{display:flex;gap:8px;margin-top:14px;}
+  .foot-actions button{flex:1;}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block;margin-right:6px;}
+  #login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;}
+  .login-box{width:100%;max-width:340px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:26px 22px;box-shadow:0 3px 10px rgba(60,45,20,.15);}
+  .login-box h1{font-size:24px;text-align:center;margin:0 0 4px;}
+  .login-box p.muted{text-align:center;margin:0 0 20px;}
+  .login-box input{margin-bottom:10px;}
+  .login-box button{width:100%;padding:12px;font-size:15px;}
+  .login-error{color:var(--danger);font-size:13px;text-align:center;margin:-2px 0 10px;min-height:16px;}
+  .logout-btn{background:none;border:none;color:var(--muted);font-family:inherit;font-size:13px;cursor:pointer;padding:6px 4px;}
+</style>
+</head>
+<body>
+
+<div id="login-screen" style="display:none;">
+  <div class="login-box">
+    <h1>🍺 Comandas do Bar</h1>
+    <p class="muted">Entre para gerenciar as comandas</p>
+    <input id="login-usuario" placeholder="Usuário" autocomplete="username" />
+    <input id="login-senha" type="password" placeholder="Senha" autocomplete="current-password" />
+    <div class="login-error" id="login-error"></div>
+    <button class="btn btn-accent" onclick="onLogin()">Entrar</button>
+  </div>
+</div>
+
+<div id="app-shell" style="display:none;">
+<header>
+  <div class="row">
+    <h1>🍺 Comandas do Bar</h1>
+    <button class="logout-btn" onclick="onLogout()">Sair</button>
+  </div>
+  <nav>
+    <button data-tab="abertas" class="active">Abertas</button>
+    <button data-tab="fiado">Fiado</button>
+    <button data-tab="estoque">Estoque</button>
+    <button data-tab="historico">Histórico</button>
+  </nav>
+</header>
+
+<main id="app"></main>
+</div>
+<div id="toast" class="toast"></div>
+
+<script>
+const SUPABASE_URL = "https://ijtsuwwtwfqoyvlohezt.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlqdHN1d3d0d2Zxb3l2bG9oZXp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwNzEzMzEsImV4cCI6MjA5ODY0NzMzMX0.3qgZII0PaGRluObRP0MM8WyZ-EsXwq5cwvCMlu6Gxw0";
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let tab = "abertas";
+let comandas = []; // all, joined with itens totals
+let produtos = [];
+let openComandaId = null; // which detail sheet is open
+
+const app = document.getElementById("app");
+const toastEl = document.getElementById("toast");
+
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  setTimeout(()=>toastEl.classList.remove("show"), 1800);
+}
+
+function fmt(v){
+  return (Number(v)||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+}
+
+function fmtDate(d){
+  if(!d) return "";
+  return new Date(d).toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"});
+}
+
+async function loadAll(){
+  const { data: cmds, error: e1 } = await sb.from("comandas").select("*").order("criada_em",{ascending:false});
+  if(e1){ console.error(e1); toast("Erro ao carregar comandas"); return; }
+  const { data: itens, error: e2 } = await sb.from("itens").select("*").order("criado_em",{ascending:true});
+  if(e2){ console.error(e2); toast("Erro ao carregar itens"); return; }
+  const { data: prods, error: e3 } = await sb.from("produtos").select("*").order("nome",{ascending:true});
+  if(e3){ console.error(e3); toast("Erro ao carregar produtos"); return; }
+  comandas = cmds.map(c => {
+    const its = itens.filter(i => i.comanda_id === c.id);
+    const total = its.reduce((s,i)=>s+Number(i.valor),0);
+    return {...c, itens: its, total};
+  });
+  produtos = prods;
+  render();
+}
+
+async function abrirComanda(nome){
+  nome = nome.trim();
+  if(!nome) return;
+  const { error } = await sb.from("comandas").insert({ nome, status: "aberta" });
+  if(error){
+    if(error.code === "23505"){ toast("Já existe uma comanda aberta com esse nome"); }
+    else { toast("Erro ao abrir comanda"); console.error(error); }
+    return;
+  }
+  toast("Comanda aberta");
+  await loadAll();
+}
+
+async function excluirComanda(comandaId){
+  const c = comandas.find(x => x.id === comandaId);
+  if(!c) return;
+  const msg = c.itens.length
+    ? `Excluir a comanda de ${c.nome} e seus ${c.itens.length} item(ns)? Essa ação não pode ser desfeita.`
+    : `Excluir a comanda de ${c.nome}? Essa ação não pode ser desfeita.`;
+  if(!confirm(msg)) return;
+  const { error } = await sb.from("comandas").delete().eq("id", comandaId);
+  if(error){ toast("Erro ao excluir comanda"); console.error(error); return; }
+  toast("Comanda excluída");
+  openComandaId = null;
+  await loadAll();
+}
+
+async function addItem(comandaId, descricao, valor){
+  descricao = descricao.trim();
+  valor = parseFloat(String(valor).replace(",","."));
+  if(!descricao || isNaN(valor) || valor <= 0){ toast("Preencha descrição e valor"); return; }
+  const { error } = await sb.from("itens").insert({ comanda_id: comandaId, descricao, valor });
+  if(error){ toast("Erro ao adicionar item"); console.error(error); return; }
+  await loadAll();
+}
+
+async function removeItem(itemId){
+  const { error } = await sb.rpc("remover_item_estoque", { p_item_id: itemId });
+  if(error){ toast("Erro ao remover item"); console.error(error); return; }
+  await loadAll();
+}
+
+async function addProdutoItem(comandaId, produtoId){
+  const { error } = await sb.rpc("lancar_item_produto", { p_comanda_id: comandaId, p_produto_id: produtoId });
+  if(error){ toast(error.message || "Erro ao lançar produto"); console.error(error); return; }
+  await loadAll();
+}
+
+async function cadastrarProduto(nome, preco, estoque, estoqueMinimo){
+  nome = nome.trim();
+  preco = parseFloat(String(preco).replace(",","."));
+  estoque = parseInt(estoque, 10) || 0;
+  const minimo = parseInt(estoqueMinimo, 10);
+  if(!nome || isNaN(preco) || preco < 0){ toast("Preencha nome e preço"); return; }
+  const payload = { nome, preco, estoque };
+  if(!isNaN(minimo)) payload.estoque_minimo = minimo;
+  const { error } = await sb.from("produtos").insert(payload);
+  if(error){
+    if(error.code === "23505"){ toast("Já existe um produto com esse nome"); }
+    else { toast("Erro ao cadastrar produto"); console.error(error); }
+    return;
+  }
+  toast("Produto cadastrado");
+  await loadAll();
+}
+
+async function ajustarEstoque(produtoId, delta){
+  const { error } = await sb.rpc("ajustar_estoque", { p_produto_id: produtoId, p_delta: delta });
+  if(error){ toast("Erro ao ajustar estoque"); console.error(error); return; }
+  await loadAll();
+}
+
+async function excluirProduto(produtoId){
+  const p = produtos.find(x => x.id === produtoId);
+  if(!p) return;
+  if(!confirm(`Excluir o produto "${p.nome}" do estoque?`)) return;
+  const { error } = await sb.from("produtos").delete().eq("id", produtoId);
+  if(error){ toast("Erro ao excluir produto"); console.error(error); return; }
+  toast("Produto excluído");
+  await loadAll();
+}
+
+async function fecharComPagamento(comandaId, forma){
+  const { error } = await sb.from("comandas").update({
+    status: "paga", forma_pagamento: forma, fechada_em: new Date().toISOString()
+  }).eq("id", comandaId);
+  if(error){ toast("Erro ao fechar comanda"); console.error(error); return; }
+  toast("Comanda fechada");
+  openComandaId = null;
+  await loadAll();
+}
+
+async function marcarFiado(comandaId){
+  const { error } = await sb.from("comandas").update({
+    status: "fiado", fechada_em: new Date().toISOString()
+  }).eq("id", comandaId);
+  if(error){ toast("Erro ao marcar fiado"); console.error(error); return; }
+  toast("Marcado como fiado");
+  openComandaId = null;
+  await loadAll();
+}
+
+async function quitarFiado(comandaId){
+  const { error } = await sb.from("comandas").update({
+    status: "paga", forma_pagamento: "fiado"
+  }).eq("id", comandaId);
+  if(error){ toast("Erro ao quitar"); return; }
+  toast("Fiado quitado");
+  await loadAll();
+}
+
+async function reabrirComanda(comandaId){
+  const { error } = await sb.from("comandas").update({
+    status: "aberta", forma_pagamento: null, fechada_em: null
+  }).eq("id", comandaId);
+  if(error){ toast("Erro ao reabrir"); return; }
+  toast("Comanda reaberta");
+  await loadAll();
+}
+
+// ---------- Reconhecimento de voz (compartilhado) ----------
+function criarReconhecimentoVoz(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    toast("Seu navegador não suporta reconhecimento de voz.");
+    return null;
+  }
+  const rec = new SpeechRecognition();
+  rec.lang = 'pt-BR';
+  rec.continuous = false;
+  rec.interimResults = false;
+  rec.onerror = function(event){
+    toast(event.error === "not-allowed"
+      ? "Permissão de microfone negada."
+      : `Erro no reconhecimento de voz (${event.error}). Se estiver abrindo o arquivo local, hospede em https:// para o microfone funcionar.`);
+  };
+  return rec;
+}
+
+// ---------- Identificação de produto e parsing de linhas em lote ----------
+function encontrarProduto(nome){
+  const alvo = (nome || "").trim().toLowerCase();
+  if(!alvo) return null;
+  return produtos.find(p => p.nome.toLowerCase() === alvo)
+      || produtos.find(p => p.nome.toLowerCase().startsWith(alvo));
+}
+
+function parseLinhaParaItem(linhaOriginal){
+  const linha = linhaOriginal.trim();
+  if(!linha) return null;
+
+  const matchX = linha.match(/^(.+?)\s*x\s*(\d+)\s*$/i);
+  if(matchX){
+    const nomeBuscado = matchX[1].trim();
+    const qtd = parseInt(matchX[2], 10);
+    const prod = encontrarProduto(nomeBuscado);
+    if(prod) return { ok:true, produto_id: prod.id, quantidade: qtd, label: `${prod.nome} x${qtd}` };
+    return { ok:false, erro: `Produto não encontrado: "${nomeBuscado}"` };
+  }
+
+  let descricaoCandidata = linha, valorDigitado = NaN, tinhaSeparador = false;
+  for(const sep of [';', '\t', ',']){
+    const partes = linha.split(sep);
+    if(partes.length === 2){
+      descricaoCandidata = partes[0].trim();
+      valorDigitado = parseFloat(partes[1].trim().replace(',', '.'));
+      tinhaSeparador = true;
+      break;
+    }
+  }
+
+  const prod = encontrarProduto(descricaoCandidata);
+  if(prod) return { ok:true, produto_id: prod.id, quantidade: 1, label: prod.nome };
+
+  if(tinhaSeparador){
+    if(!isNaN(valorDigitado) && valorDigitado > 0){
+      return { ok:true, descricao: descricaoCandidata, valor: valorDigitado, label: descricaoCandidata };
+    }
+    return { ok:false, erro: `Valor inválido para "${descricaoCandidata}"` };
+  }
+
+  return { ok:false, erro: `Não identifiquei "${linha}" (produto não cadastrado e nenhum valor informado)` };
+}
+
+async function lancarItensEmLote(comandaId, linhas){
+  const itensPayload = [];
+  const errosLocais = [];
+  linhas.forEach(linha => {
+    const r = parseLinhaParaItem(linha);
+    if(r === null) return;
+    if(r.ok) itensPayload.push(r);
+    else errosLocais.push(r.erro);
+  });
+
+  if(itensPayload.length === 0){
+    toast("Nenhum item válido encontrado." + (errosLocais.length ? " " + errosLocais.join("; ") : ""));
+    return;
+  }
+
+  const { data, error } = await sb.rpc("lancar_itens_em_lote", {
+    p_comanda_id: comandaId,
+    p_itens: itensPayload.map(it => it.produto_id
+      ? { produto_id: it.produto_id, quantidade: it.quantidade }
+      : { descricao: it.descricao, valor: it.valor })
+  });
+  if(error){ toast("Erro ao lançar itens: " + error.message); console.error(error); return; }
+
+  await loadAll();
+  openDetail(comandaId);
+  const resumo = data && data[0];
+  const erros = [...errosLocais, ...((resumo && resumo.erros) || [])];
+  toast(`${(resumo && resumo.adicionados) || 0} item(ns) lançado(s).` + (erros.length ? ` Problemas: ${erros.join('; ')}` : ""));
+}
+
+// ---------- Múltiplos itens na comanda (colar em massa / CSV / voz) ----------
+window.toggleMultiInput = function(){
+  const area = document.getElementById("multi-input-area");
+  if(area) area.style.display = area.style.display === "none" ? "block" : "none";
+};
+
+window.onAddMultipleItems = async function(comandaId){
+  const textarea = document.getElementById("multi-items");
+  const raw = textarea.value;
+  if(!raw.trim()){ toast("Digite ou cole os itens primeiro."); return; }
+  const linhas = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  await lancarItensEmLote(comandaId, linhas);
+  toggleMultiInput();
+  textarea.value = "";
+};
+
+window.onImportCSV = async function(comandaId, input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async function(e){
+    const linhas = e.target.result.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    await lancarItensEmLote(comandaId, linhas);
+  };
+  reader.readAsText(file, "UTF-8");
+  input.value = '';
+};
+
+window.startVoiceInput = function(){
+  const rec = criarReconhecimentoVoz();
+  if(!rec) return;
+  rec.onresult = function(event){
+    const transcript = event.results[0][0].transcript;
+    const textarea = document.getElementById("multi-items");
+    if(textarea){
+      textarea.value += (textarea.value && !textarea.value.endsWith("\n") ? "\n" : "") + transcript;
+      toast("Áudio transcrito! Confira antes de adicionar.");
+    }
+  };
+  rec.start();
+};
+
+window.startVoiceQuickAdd = function(comandaId){
+  const rec = criarReconhecimentoVoz();
+  if(!rec) return;
+  rec.onresult = async function(event){
+    const transcript = event.results[0][0].transcript.trim();
+    const prod = encontrarProduto(transcript);
+    if(prod){
+      await addProdutoItem(comandaId, prod.id);
+      toast(`"${transcript}" → ${prod.nome} lançado`);
+    } else {
+      const desc = document.getElementById("item-desc");
+      if(desc) desc.value = transcript;
+      const valorInp = document.getElementById("item-valor");
+      if(valorInp) valorInp.focus();
+      toast(`Não encontrei "${transcript}" no estoque — preencha o valor manualmente.`);
+    }
+  };
+  rec.start();
+};
+
+// ---------- Cadastro em massa de produtos (Estoque) ----------
+window.toggleBulkProdutos = function(){
+  const area = document.getElementById("bulk-produtos-area");
+  if(area) area.style.display = area.style.display === "none" ? "block" : "none";
+};
+
+window.onCadastrarProdutosEmLote = async function(){
+  const textarea = document.getElementById("produtos-bulk");
+  const raw = textarea.value;
+  if(!raw.trim()){ toast("Cole a lista de produtos primeiro."); return; }
+
+  const linhas = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  const rows = [];
+  const erros = [];
+  linhas.forEach(linha => {
+    const partes = linha.split(";").map(s => s.trim());
+    if(partes.length < 2){ erros.push(`Linha inválida (use "nome; preço; estoque; mínimo"): "${linha}"`); return; }
+    const nome = partes[0];
+    const preco = parseFloat(partes[1].replace(",", "."));
+    const estoqueNum = partes[2] !== undefined ? parseInt(partes[2], 10) : 0;
+    const minimoNum = partes[3] !== undefined ? parseInt(partes[3], 10) : NaN;
+    if(!nome || isNaN(preco) || preco < 0){ erros.push(`Preço inválido: "${linha}"`); return; }
+    const row = { nome, preco, estoque: isNaN(estoqueNum) ? 0 : estoqueNum };
+    if(!isNaN(minimoNum)) row.estoque_minimo = minimoNum;
+    rows.push(row);
+  });
+
+  if(rows.length === 0){ toast("Nenhum produto válido. " + erros.join("; ")); return; }
+
+  const { data, error } = await sb.from("produtos")
+    .upsert(rows, { onConflict: "nome", ignoreDuplicates: true })
+    .select();
+  if(error){ toast("Erro ao cadastrar produtos"); console.error(error); return; }
+
+  const adicionados = data.length;
+  const pulados = rows.length - adicionados;
+  await loadAll();
+  toast(`${adicionados} produto(s) cadastrado(s).`
+    + (pulados ? ` ${pulados} já existiam (ignorado).` : "")
+    + (erros.length ? ` Problemas: ${erros.join("; ")}` : ""));
+  textarea.value = "";
+  toggleBulkProdutos();
+};
+
+window.startVoiceProduto = function(){
+  const rec = criarReconhecimentoVoz();
+  if(!rec) return;
+  rec.onresult = function(event){
+    const transcript = event.results[0][0].transcript.trim();
+    const textarea = document.getElementById("produtos-bulk");
+    if(textarea){
+      textarea.value += (textarea.value && !textarea.value.endsWith("\n") ? "\n" : "") + transcript;
+      toast("Transcrito! Ajuste preço/estoque antes de cadastrar.");
+    }
+  };
+  rec.start();
+};
+
+// ---------- Rendering ----------
+
+function render(){
+  if(tab === "abertas") renderAbertas();
+  else if(tab === "fiado") renderFiado();
+  else if(tab === "estoque") renderEstoque();
+  else renderHistorico();
+  renderDetailSheet();
+}
+
+function renderEstoque(){
+  let html = `
+    <div class="card">
+      <div class="form-row">
+        <input id="prod-nome" placeholder="Produto (ex: Cerveja)" />
+        <input id="prod-preco" placeholder="Preço" inputmode="decimal" style="max-width:90px;" />
+      </div>
+      <div class="form-row">
+        <input id="prod-estoque" placeholder="Estoque inicial" inputmode="numeric" />
+        <input id="prod-minimo" placeholder="Mínimo (opc.)" inputmode="numeric" />
+        <button class="btn btn-accent" onclick="onCadastrarProduto()">Add</button>
+      </div>
+      <button class="btn btn-ghost" onclick="toggleBulkProdutos()" style="width:100%;">📋 Cadastrar vários produtos de uma vez</button>
+      <div id="bulk-produtos-area" style="display:none; margin-top:10px;">
+        <textarea id="produtos-bulk" rows="5" placeholder="Um produto por linha: nome; preço; estoque; mínimo (opcional)&#10;Ex:&#10;Cerveja; 8,00; 50; 10&#10;Refrigerante; 7,50; 30&#10;Água; 5,00; 40"></textarea>
+        <div class="form-row" style="margin-top:8px;">
+          <button class="btn btn-accent" onclick="onCadastrarProdutosEmLote()">Cadastrar todos</button>
+          <button class="btn btn-ghost" onclick="toggleBulkProdutos()">Cancelar</button>
+          <button class="btn btn-ghost" onclick="startVoiceProduto()">🎤 Ditar</button>
+        </div>
+        <div class="help-box">Formato: <code>nome; preço; estoque; mínimo</code> (mínimo é opcional). Use ponto ou vírgula no preço. Produtos com nome já cadastrado são ignorados.</div>
+      </div>
+    </div>
+  `;
+  if(produtos.length === 0){
+    html += `<div class="empty">Nenhum produto cadastrado ainda.</div>`;
+  } else {
+    html += produtos.map(p => {
+      const baixo = p.estoque <= 0
+        ? `<span class="badge badge-fiado">ESGOTADO</span>`
+        : p.estoque <= p.estoque_minimo
+          ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
+          : "";
+      return `
+      <div class="card paper-card">
+        <div class="row">
+          <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
+            <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
+          </div>
+          <div class="row" style="gap:6px;width:auto;">
+            <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',-1)">-1</button>
+            <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',1)">+1</button>
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:10px;">
+          <input id="repor-${p.id}" placeholder="Qtd. para repor" inputmode="numeric" />
+          <button class="btn btn-accent" onclick="onReporEstoque('${p.id}')">Repor</button>
+          <button class="btn btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  app.innerHTML = html;
+}
+
+function renderAbertas(){
+  const abertas = comandas.filter(c => c.status === "aberta");
+  let html = `
+    <div class="card">
+      <div class="form-row">
+        <input id="novo-nome" placeholder="Nome do cliente" />
+        <button class="btn btn-accent" onclick="onAbrirComanda()">Abrir</button>
+      </div>
+    </div>
+  `;
+  if(abertas.length === 0){
+    html += `<div class="empty">Nenhuma comanda aberta.<br>Digite um nome acima para abrir uma.</div>`;
+  } else {
+    html += abertas.map(c => `
+      <div class="card paper-card" onclick="openDetail('${c.id}')" style="cursor:pointer;">
+        <div class="row">
+          <div><span class="status-dot"></span><strong>${escapeHtml(c.nome)}</strong>
+            <div class="muted">${c.itens.length} ${c.itens.length===1?'item':'itens'} · aberta ${fmtDate(c.criada_em)}</div>
+          </div>
+          <div class="total">${fmt(c.total)}</div>
+        </div>
+      </div>
+    `).join("");
+  }
+  app.innerHTML = html;
+  const inp = document.getElementById("novo-nome");
+  if(inp) inp.addEventListener("keydown", e => { if(e.key === "Enter") onAbrirComanda(); });
+}
+
+function renderFiado(){
+  const fiados = comandas.filter(c => c.status === "fiado");
+  const totalGeral = fiados.reduce((s,c)=>s+c.total,0);
+  let html = `
+    <div class="card row">
+      <div><strong>Total em fiado</strong><div class="muted">${fiados.length} comanda(s) em aberto</div></div>
+      <div class="total" style="color:var(--warn)">${fmt(totalGeral)}</div>
+    </div>
+  `;
+  if(fiados.length === 0){
+    html += `<div class="empty">Nenhum fiado em aberto. 🎉</div>`;
+  } else {
+    html += fiados.map(c => `
+      <div class="card paper-card">
+        <div class="row">
+          <div><strong>${escapeHtml(c.nome)}</strong>
+            <div class="muted">desde ${fmtDate(c.fechada_em || c.criada_em)}</div>
+          </div>
+          <div class="total" style="color:var(--warn)">${fmt(c.total)}</div>
+        </div>
+        <div class="foot-actions">
+          <button class="btn btn-ghost" onclick="openDetail('${c.id}')">Ver itens</button>
+          <button class="btn btn-accent" onclick="quitarFiado('${c.id}')">Quitar fiado</button>
+        </div>
+      </div>
+    `).join("");
+  }
+  app.innerHTML = html;
+}
+
+const LABEL_PAGAMENTO = {dinheiro:"Dinheiro", pix:"Pix", cartao:"Cartão", fiado:"Fiado (quitado)"};
+
+function renderHistorico(){
+  const pagas = comandas.filter(c => c.status === "paga")
+    .sort((a,b)=> new Date(b.fechada_em) - new Date(a.fechada_em));
+  if(pagas.length === 0){
+    app.innerHTML = `<div class="empty">Nenhuma comanda fechada ainda.</div>`;
+    return;
+  }
+
+  const grupos = {};
+  pagas.forEach(c => {
+    const diaKey = new Date(c.fechada_em).toLocaleDateString("pt-BR");
+    (grupos[diaKey] = grupos[diaKey] || []).push(c);
+  });
+
+  const html = Object.keys(grupos).map(dia => {
+    const lista = grupos[dia];
+    const totalDia = lista.reduce((s,c)=>s+c.total,0);
+    const porForma = {};
+    lista.forEach(c => {
+      const key = c.forma_pagamento || "-";
+      porForma[key] = (porForma[key]||0) + c.total;
+    });
+    const breakdown = Object.keys(porForma)
+      .map(k => `${LABEL_PAGAMENTO[k]||k}: ${fmt(porForma[k])}`)
+      .join(" · ");
+
+    const itensHtml = lista.map(c => {
+      const label = LABEL_PAGAMENTO[c.forma_pagamento] || c.forma_pagamento || "-";
+      return `
+      <div class="card paper-card" onclick="openDetail('${c.id}')" style="cursor:pointer;">
+        <div class="row">
+          <div><strong>${escapeHtml(c.nome)}</strong>
+            <div class="muted">${fmtDate(c.fechada_em)} · ${label}</div>
+          </div>
+          <div class="total">${fmt(c.total)}</div>
+        </div>
+      </div>`;
+    }).join("");
+
+    return `
+      <div class="card" style="background:var(--card2);">
+        <div class="row">
+          <strong>${dia}</strong>
+          <span class="total">${fmt(totalDia)}</span>
+        </div>
+        <div class="muted">${breakdown}</div>
+      </div>
+      ${itensHtml}
+    `;
+  }).join("");
+
+  app.innerHTML = html;
+}
+
+function renderDetailSheet(){
+  let existing = document.getElementById("detail-overlay");
+  if(existing) existing.remove();
+  if(!openComandaId) return;
+  const c = comandas.find(x => x.id === openComandaId);
+  if(!c) return;
+
+  const itensHtml = c.itens.length
+    ? c.itens.map(i => `
+        <div class="item-row">
+          <span>${escapeHtml(i.descricao)}</span>
+          <span style="display:flex;align-items:center;gap:10px;">
+            ${fmt(i.valor)}
+            ${c.status === "aberta" ? `<button class="x" onclick="removeItem('${i.id}')">&times;</button>` : ""}
+          </span>
+        </div>`).join("")
+    : `<div class="muted" style="padding:10px 0;">Nenhum item lançado ainda.</div>`;
+
+  const badge = c.status === "fiado" ? `<span class="badge badge-fiado">FIADO</span>`
+    : c.status === "paga" ? `<span class="badge badge-paga">PAGA</span>` : "";
+
+  const produtosHtml = c.status === "aberta" && produtos.length ? `
+    <div class="muted" style="margin:10px 0 4px;">Produtos cadastrados</div>
+    <div class="card" style="padding:8px 12px;">
+      ${produtos.map(p => `
+        <div class="item-row">
+          <span>${escapeHtml(p.nome)} <span class="muted">(${fmt(p.preco)})</span></span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span class="muted">${p.estoque <= 0 ? "esgotado" : p.estoque + " rest."}</span>
+            <button class="btn btn-accent" style="padding:4px 10px;" ${p.estoque<=0 ? "disabled" : ""} onclick="addProdutoItem('${c.id}','${p.id}')">+</button>
+          </span>
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
+
+  let actionsHtml = "";
+  if(c.status === "aberta"){
+    actionsHtml = `
+      ${produtosHtml}
+      <div class="muted" style="margin:10px 0 4px;">Outro item (avulso)</div>
+      <div class="form-row">
+        <input id="item-desc" placeholder="Descrição (ex: Cerveja)" />
+        <input id="item-valor" placeholder="Valor" inputmode="decimal" style="max-width:100px;" />
+        <button class="btn btn-ghost" onclick="startVoiceQuickAdd('${c.id}')" title="Ditar item">🎤</button>
+        <button class="btn btn-accent" onclick="onAddItem('${c.id}')">+</button>
+      </div>
+      <div style="margin-top:10px;border-top:1px dashed var(--border);padding-top:10px;">
+        <button class="btn btn-ghost" onclick="toggleMultiInput()" style="width:100%;">📋 Adicionar vários itens de uma vez</button>
+        <div id="multi-input-area" style="display:none;margin-top:8px;">
+          <textarea id="multi-items" rows="4" placeholder="Um item por linha. Ex:&#10;Cerveja x 3&#10;Porção de batata; 25.00&#10;Refrigerante"></textarea>
+          <div class="form-row" style="margin-top:6px;flex-wrap:wrap;">
+            <button class="btn btn-accent" onclick="onAddMultipleItems('${c.id}')">Adicionar todos</button>
+            <button class="btn btn-ghost" onclick="toggleMultiInput()">Cancelar</button>
+            <button class="btn btn-ghost" onclick="startVoiceInput()">🎤 Ditar</button>
+            <label class="btn btn-ghost" style="text-align:center;cursor:pointer;">
+              📂 Importar CSV
+              <input type="file" accept=".csv,.txt" onchange="onImportCSV('${c.id}', this)" style="display:none;">
+            </label>
+          </div>
+          <div class="help-box">
+            Formatos aceitos por linha: <code>produto x quantidade</code> (baixa estoque) · <code>produto</code> sozinho, se já cadastrado (baixa 1 do estoque) · <code>descrição; valor</code> pra item avulso sem controle de estoque.
+          </div>
+        </div>
+      </div>
+      <div class="payopts">
+        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','dinheiro')">💵 Dinheiro</button>
+        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','pix')">📱 Pix</button>
+        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','cartao')">💳 Cartão</button>
+      </div>
+      <button class="btn btn-warn" style="width:100%" onclick="marcarFiado('${c.id}')">Fechar como Fiado</button>
+    `;
+  } else if(c.status === "fiado"){
+    actionsHtml = `<button class="btn btn-accent" style="width:100%" onclick="quitarFiado('${c.id}')">Quitar fiado</button>`;
+  } else {
+    actionsHtml = `<button class="btn btn-ghost" style="width:100%" onclick="reabrirComanda('${c.id}')">Reabrir comanda</button>`;
+  }
+
+  const html = `
+    <div class="overlay" id="detail-overlay" onclick="if(event.target===this) closeDetail()">
+      <div class="sheet">
+        <div class="row">
+          <h2>${escapeHtml(c.nome)} ${badge}</h2>
+          <button class="x" onclick="closeDetail()">&times;</button>
+        </div>
+        <div class="muted" style="margin-bottom:10px;">Aberta em ${fmtDate(c.criada_em)}</div>
+        <div class="card" style="padding:10px 14px;">${itensHtml}</div>
+        <div class="row" style="margin:12px 0;">
+          <strong>Total</strong>
+          <span class="total">${fmt(c.total)}</span>
+        </div>
+        ${actionsHtml}
+        <button class="btn btn-danger" style="width:100%;margin-top:8px;" onclick="excluirComanda('${c.id}')">Excluir comanda</button>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML("beforeend", html);
+  const descInp = document.getElementById("item-desc");
+  if(descInp){
+    descInp.addEventListener("keydown", e => { if(e.key === "Enter") document.getElementById("item-valor").focus(); });
+    document.getElementById("item-valor").addEventListener("keydown", e => { if(e.key === "Enter") onAddItem(c.id); });
+  }
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+}
+
+// ---------- Event handlers exposed globally ----------
+window.onAbrirComanda = () => {
+  const inp = document.getElementById("novo-nome");
+  abrirComanda(inp.value);
+  inp.value = "";
+};
+window.onAddItem = (comandaId) => {
+  const desc = document.getElementById("item-desc");
+  const valor = document.getElementById("item-valor");
+  addItem(comandaId, desc.value, valor.value);
+  desc.value = ""; valor.value = "";
+  desc.focus();
+};
+window.openDetail = (id) => { openComandaId = id; renderDetailSheet(); };
+window.closeDetail = () => { openComandaId = null; renderDetailSheet(); };
+window.removeItem = removeItem;
+window.fecharComPagamento = fecharComPagamento;
+window.marcarFiado = marcarFiado;
+window.quitarFiado = quitarFiado;
+window.reabrirComanda = reabrirComanda;
+window.excluirComanda = excluirComanda;
+window.addProdutoItem = addProdutoItem;
+window.ajustarEstoque = ajustarEstoque;
+window.excluirProduto = excluirProduto;
+window.onCadastrarProduto = () => {
+  const nome = document.getElementById("prod-nome");
+  const preco = document.getElementById("prod-preco");
+  const estoque = document.getElementById("prod-estoque");
+  const minimo = document.getElementById("prod-minimo");
+  cadastrarProduto(nome.value, preco.value, estoque.value, minimo.value);
+  nome.value = ""; preco.value = ""; estoque.value = ""; minimo.value = "";
+};
+window.onReporEstoque = (produtoId) => {
+  const inp = document.getElementById(`repor-${produtoId}`);
+  const qtd = parseInt(inp.value, 10);
+  if(!qtd || qtd <= 0){ toast("Informe uma quantidade válida"); return; }
+  ajustarEstoque(produtoId, qtd);
+  inp.value = "";
+};
+
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    tab = btn.dataset.tab;
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    render();
+  });
+});
+
+// ---------- Autenticação ----------
+const SESSION_KEY = "bar_sessao";
+let realtimeStarted = false;
+
+function startApp(){
+  document.getElementById("login-screen").style.display = "none";
+  document.getElementById("app-shell").style.display = "block";
+  if(!realtimeStarted){
+    realtimeStarted = true;
+    sb.channel("comandas-sync")
+      .on("postgres_changes", { event: "*", schema: "public", table: "comandas" }, loadAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "itens" }, loadAll)
+      .on("postgres_changes", { event: "*", schema: "public", table: "produtos" }, loadAll)
+      .subscribe();
+  }
+  loadAll();
+}
+
+function showLogin(){
+  document.getElementById("app-shell").style.display = "none";
+  document.getElementById("login-screen").style.display = "flex";
+}
+
+window.onLogin = async () => {
+  const usuario = document.getElementById("login-usuario").value.trim();
+  const senha = document.getElementById("login-senha").value;
+  const errEl = document.getElementById("login-error");
+  errEl.textContent = "";
+  if(!usuario || !senha){ errEl.textContent = "Preencha usuário e senha"; return; }
+  const { data, error } = await sb.rpc("criar_sessao", { p_usuario: usuario, p_senha: senha });
+  if(error){
+    errEl.textContent = /tentativas/i.test(error.message||"") ? error.message : "Erro ao verificar login";
+    console.error(error);
+    return;
+  }
+  if(data && data.length){
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ token: data[0].token, expira_em: data[0].expira_em }));
+    document.getElementById("login-senha").value = "";
+    startApp();
+  } else {
+    errEl.textContent = "Usuário ou senha incorretos";
+  }
+};
+
+window.onLogout = async () => {
+  const sessao = getSessao();
+  localStorage.removeItem(SESSION_KEY);
+  if(sessao){ await sb.rpc("encerrar_sessao", { p_token: sessao.token }); }
+  showLogin();
+};
+
+// Permite logar com Enter
+["login-usuario","login-senha"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => { if(e.key === "Enter") onLogin(); });
+});
+
+function getSessao(){
+  try{
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch{
+    return null;
+  }
+}
+
+async function initAuth(){
+  const sessao = getSessao();
+  if(!sessao || !sessao.token){ showLogin(); return; }
+  const { data, error } = await sb.rpc("validar_sessao", { p_token: sessao.token });
+  if(error || data !== true){
+    localStorage.removeItem(SESSION_KEY);
+    showLogin();
+    return;
+  }
+  startApp();
+}
+
+initAuth();
+</script>
+</body>
+</html>
