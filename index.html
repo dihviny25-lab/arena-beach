@@ -154,7 +154,7 @@ async function loadAll(){
   render();
 }
 
-async function abrirComanda(nome){
+async function abrirComanda(nome, celular){
   nome = nome.trim();
   if(!nome) return;
   const { error } = await sb.from("comandas").insert({ nome, status: "aberta" });
@@ -162,6 +162,11 @@ async function abrirComanda(nome){
     if(error.code === "23505"){ toast("Já existe uma comanda aberta com esse nome"); }
     else { toast("Erro ao abrir comanda"); console.error(error); }
     return;
+  }
+  celular = (celular || "").trim();
+  if(celular){
+    const { error: e2 } = await sb.from("clientes").upsert({ nome, celular }, { onConflict: "celular" });
+    if(e2) console.error(e2);
   }
   toast("Comanda aberta");
   await loadAll();
@@ -202,13 +207,14 @@ async function addProdutoItem(comandaId, produtoId){
   await loadAll();
 }
 
-async function cadastrarProduto(nome, preco, estoque, estoqueMinimo){
+async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria){
   nome = nome.trim();
   preco = parseFloat(String(preco).replace(",","."));
   estoque = parseInt(estoque, 10) || 0;
   const minimo = parseInt(estoqueMinimo, 10);
+  categoria = (categoria || "").trim() || "Outros";
   if(!nome || isNaN(preco) || preco < 0){ toast("Preencha nome e preço"); return; }
-  const payload = { nome, preco, estoque };
+  const payload = { nome, preco, estoque, categoria };
   if(!isNaN(minimo)) payload.estoque_minimo = minimo;
   const { error } = await sb.from("produtos").insert(payload);
   if(error){
@@ -444,7 +450,11 @@ window.onCadastrarProdutosEmLote = async function(){
   const linhas = raw.split("\n").map(l => l.trim()).filter(Boolean);
   const rows = [];
   const erros = [];
+  let categoriaAtual = "Outros";
   linhas.forEach(linha => {
+    const headerMatch = linha.match(/^#{1,2}\s*(.+)$/);
+    if(headerMatch){ categoriaAtual = headerMatch[1].trim() || "Outros"; return; }
+
     const partes = linha.split(";").map(s => s.trim());
     if(partes.length < 2){ erros.push(`Linha inválida (use "nome; preço; estoque; mínimo"): "${linha}"`); return; }
     const nome = partes[0];
@@ -452,7 +462,7 @@ window.onCadastrarProdutosEmLote = async function(){
     const estoqueNum = partes[2] !== undefined ? parseInt(partes[2], 10) : 0;
     const minimoNum = partes[3] !== undefined ? parseInt(partes[3], 10) : NaN;
     if(!nome || isNaN(preco) || preco < 0){ erros.push(`Preço inválido: "${linha}"`); return; }
-    const row = { nome, preco, estoque: isNaN(estoqueNum) ? 0 : estoqueNum };
+    const row = { nome, preco, estoque: isNaN(estoqueNum) ? 0 : estoqueNum, categoria: categoriaAtual };
     if(!isNaN(minimoNum)) row.estoque_minimo = minimoNum;
     rows.push(row);
   });
@@ -498,57 +508,69 @@ function render(){
   renderDetailSheet();
 }
 
+function produtoCardHtml(p){
+  const baixo = p.estoque <= 0
+    ? `<span class="badge badge-fiado">ESGOTADO</span>`
+    : p.estoque <= p.estoque_minimo
+      ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
+      : "";
+  return `
+  <div class="card paper-card">
+    <div class="row">
+      <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
+        <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
+      </div>
+      <div class="row" style="gap:6px;width:auto;">
+        <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',-1)">-1</button>
+        <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',1)">+1</button>
+      </div>
+    </div>
+    <div class="form-row" style="margin-top:10px;">
+      <input id="repor-${p.id}" placeholder="Qtd. para repor" inputmode="numeric" />
+      <button class="btn btn-accent" onclick="onReporEstoque('${p.id}')">Repor</button>
+      <button class="btn btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
+    </div>
+  </div>`;
+}
+
 function renderEstoque(){
   let html = `
     <div class="card">
       <div class="form-row">
         <input id="prod-nome" placeholder="Produto (ex: Cerveja)" />
-        <input id="prod-preco" placeholder="Preço" inputmode="decimal" style="max-width:90px;" />
+        <input id="prod-categoria" placeholder="Categoria (ex: Bebidas)" />
       </div>
       <div class="form-row">
+        <input id="prod-preco" placeholder="Preço" inputmode="decimal" style="max-width:90px;" />
         <input id="prod-estoque" placeholder="Estoque inicial" inputmode="numeric" />
         <input id="prod-minimo" placeholder="Mínimo (opc.)" inputmode="numeric" />
-        <button class="btn btn-accent" onclick="onCadastrarProduto()">Add</button>
       </div>
-      <button class="btn btn-ghost" onclick="toggleBulkProdutos()" style="width:100%;">📋 Cadastrar vários produtos de uma vez</button>
+      <button class="btn btn-accent" style="width:100%;" onclick="onCadastrarProduto()">Cadastrar produto</button>
+      <button class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="toggleBulkProdutos()">📋 Cadastrar vários produtos de uma vez</button>
       <div id="bulk-produtos-area" style="display:none; margin-top:10px;">
-        <textarea id="produtos-bulk" rows="5" placeholder="Um produto por linha: nome; preço; estoque; mínimo (opcional)&#10;Ex:&#10;Cerveja; 8,00; 50; 10&#10;Refrigerante; 7,50; 30&#10;Água; 5,00; 40"></textarea>
+        <textarea id="produtos-bulk" rows="7" placeholder="## Bebidas&#10;Cerveja; 8,00; 50; 10&#10;Refrigerante; 7,50; 30&#10;&#10;## Petiscos&#10;Batata frita; 25,00; 20"></textarea>
         <div class="form-row" style="margin-top:8px;">
           <button class="btn btn-accent" onclick="onCadastrarProdutosEmLote()">Cadastrar todos</button>
           <button class="btn btn-ghost" onclick="toggleBulkProdutos()">Cancelar</button>
           <button class="btn btn-ghost" onclick="startVoiceProduto()">🎤 Ditar</button>
         </div>
-        <div class="help-box">Formato: <code>nome; preço; estoque; mínimo</code> (mínimo é opcional). Use ponto ou vírgula no preço. Produtos com nome já cadastrado são ignorados.</div>
+        <div class="help-box">Formato por linha: <code>nome; preço; estoque; mínimo</code> (mínimo opcional). Uma linha <code>## Categoria</code> define a categoria dos produtos seguintes (padrão "Outros" se não informar). Produtos com nome já cadastrado são ignorados.</div>
       </div>
     </div>
   `;
   if(produtos.length === 0){
     html += `<div class="empty">Nenhum produto cadastrado ainda.</div>`;
   } else {
-    html += produtos.map(p => {
-      const baixo = p.estoque <= 0
-        ? `<span class="badge badge-fiado">ESGOTADO</span>`
-        : p.estoque <= p.estoque_minimo
-          ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
-          : "";
-      return `
-      <div class="card paper-card">
-        <div class="row">
-          <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
-            <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
-          </div>
-          <div class="row" style="gap:6px;width:auto;">
-            <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',-1)">-1</button>
-            <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',1)">+1</button>
-          </div>
-        </div>
-        <div class="form-row" style="margin-top:10px;">
-          <input id="repor-${p.id}" placeholder="Qtd. para repor" inputmode="numeric" />
-          <button class="btn btn-accent" onclick="onReporEstoque('${p.id}')">Repor</button>
-          <button class="btn btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
-        </div>
-      </div>`;
-    }).join("");
+    const grupos = {};
+    produtos.forEach(p => {
+      const cat = p.categoria || "Outros";
+      (grupos[cat] = grupos[cat] || []).push(p);
+    });
+    const categorias = Object.keys(grupos).sort((a,b) => a.localeCompare(b, 'pt-BR'));
+    html += categorias.map(cat => `
+      <div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;letter-spacing:.5px;">${escapeHtml(cat)}</div>
+      ${grupos[cat].map(produtoCardHtml).join("")}
+    `).join("");
   }
   app.innerHTML = html;
 }
@@ -559,6 +581,7 @@ function renderAbertas(){
     <div class="card">
       <div class="form-row">
         <input id="novo-nome" placeholder="Nome do cliente" />
+        <input id="novo-celular" placeholder="Celular (opc.)" inputmode="tel" style="max-width:130px;" />
         <button class="btn btn-accent" onclick="onAbrirComanda()">Abrir</button>
       </div>
     </div>
@@ -579,7 +602,9 @@ function renderAbertas(){
   }
   app.innerHTML = html;
   const inp = document.getElementById("novo-nome");
-  if(inp) inp.addEventListener("keydown", e => { if(e.key === "Enter") onAbrirComanda(); });
+  const celInp = document.getElementById("novo-celular");
+  if(inp) inp.addEventListener("keydown", e => { if(e.key === "Enter") celInp.focus(); });
+  if(celInp) celInp.addEventListener("keydown", e => { if(e.key === "Enter") onAbrirComanda(); });
 }
 
 function renderFiado(){
@@ -689,20 +714,31 @@ function renderDetailSheet(){
   const badge = c.status === "fiado" ? `<span class="badge badge-fiado">FIADO</span>`
     : c.status === "paga" ? `<span class="badge badge-paga">PAGA</span>` : "";
 
-  const produtosHtml = c.status === "aberta" && produtos.length ? `
+  const produtosHtml = c.status === "aberta" && produtos.length ? (() => {
+    const grupos = {};
+    produtos.forEach(p => {
+      const cat = p.categoria || "Outros";
+      (grupos[cat] = grupos[cat] || []).push(p);
+    });
+    const categorias = Object.keys(grupos).sort((a,b) => a.localeCompare(b, 'pt-BR'));
+    return `
     <div class="muted" style="margin:10px 0 4px;">Produtos cadastrados</div>
     <div class="card" style="padding:8px 12px;">
-      ${produtos.map(p => `
-        <div class="item-row">
-          <span>${escapeHtml(p.nome)} <span class="muted">(${fmt(p.preco)})</span></span>
-          <span style="display:flex;align-items:center;gap:8px;">
-            <span class="muted">${p.estoque <= 0 ? "esgotado" : p.estoque + " rest."}</span>
-            <button class="btn btn-accent" style="padding:4px 10px;" ${p.estoque<=0 ? "disabled" : ""} onclick="addProdutoItem('${c.id}','${p.id}')">+</button>
-          </span>
-        </div>
+      ${categorias.map(cat => `
+        <div class="muted" style="font-weight:700;text-transform:uppercase;font-size:11px;margin:8px 0 2px;">${escapeHtml(cat)}</div>
+        ${grupos[cat].map(p => `
+          <div class="item-row">
+            <span>${escapeHtml(p.nome)} <span class="muted">(${fmt(p.preco)})</span></span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <span class="muted">${p.estoque <= 0 ? "esgotado" : p.estoque + " rest."}</span>
+              <button class="btn btn-accent" style="padding:4px 10px;" ${p.estoque<=0 ? "disabled" : ""} onclick="addProdutoItem('${c.id}','${p.id}')">+</button>
+            </span>
+          </div>
+        `).join("")}
       `).join("")}
     </div>
-  ` : "";
+  `;
+  })() : "";
 
   let actionsHtml = "";
   if(c.status === "aberta"){
@@ -779,8 +815,9 @@ function escapeHtml(s){
 // ---------- Event handlers exposed globally ----------
 window.onAbrirComanda = () => {
   const inp = document.getElementById("novo-nome");
-  abrirComanda(inp.value);
-  inp.value = "";
+  const cel = document.getElementById("novo-celular");
+  abrirComanda(inp.value, cel.value);
+  inp.value = ""; cel.value = "";
 };
 window.onAddItem = (comandaId) => {
   const desc = document.getElementById("item-desc");
@@ -805,8 +842,9 @@ window.onCadastrarProduto = () => {
   const preco = document.getElementById("prod-preco");
   const estoque = document.getElementById("prod-estoque");
   const minimo = document.getElementById("prod-minimo");
-  cadastrarProduto(nome.value, preco.value, estoque.value, minimo.value);
-  nome.value = ""; preco.value = ""; estoque.value = ""; minimo.value = "";
+  const categoria = document.getElementById("prod-categoria");
+  cadastrarProduto(nome.value, preco.value, estoque.value, minimo.value, categoria.value);
+  nome.value = ""; preco.value = ""; estoque.value = ""; minimo.value = ""; categoria.value = "";
 };
 window.onReporEstoque = (produtoId) => {
   const inp = document.getElementById(`repor-${produtoId}`);
