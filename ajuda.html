@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Ajuda - Comandas do Bar</title>
+<link rel="icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Kalam:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#e9e0c9; --card:#fdfaf1; --card2:#f4ecd8; --border:#d3c4a0;
+    --text:#2c2419; --muted:#8a7c5f; --accent:#3f8a4c; --accent-d:#2e6b3a;
+    --warn:#b9791f; --danger:#b3392b;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;font-family:"Courier Prime","Courier New",monospace;background:var(--bg);color:var(--text);
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+  }
+  header{position:sticky;top:0;background:var(--bg);padding:16px;border-bottom:1px dashed var(--border);}
+  header h1{font-family:"Kalam",cursive;font-size:22px;margin:0 0 4px;}
+  header p{margin:0;color:var(--muted);font-size:13px;}
+  a.voltar{display:inline-block;margin-top:10px;color:var(--accent-d);font-weight:700;text-decoration:none;font-size:14px;}
+  main{max-width:640px;margin:0 auto;padding:16px;padding-bottom:60px;}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:20px;box-shadow:0 2px 5px rgba(60,45,20,.1);}
+  .toc h2{font-size:14px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);}
+  .toc a{display:block;padding:4px 0;color:var(--text);text-decoration:none;font-size:14px;}
+  .toc a:before{content:"→ ";color:var(--accent);}
+  section{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:16px;box-shadow:0 2px 5px rgba(60,45,20,.1);scroll-margin-top:14px;}
+  section h2{font-family:"Kalam",cursive;font-size:20px;margin:0 0 10px;}
+  section h3{font-size:14px;margin:16px 0 6px;color:var(--accent-d);}
+  section p{line-height:1.6;margin:0 0 10px;font-size:14px;}
+  section ul,section ol{margin:0 0 10px;padding-left:20px;line-height:1.7;font-size:14px;}
+  code{background:var(--card2);padding:1px 5px;border-radius:4px;font-size:13px;}
+  .badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;font-weight:700;background:rgba(63,138,76,.15);color:var(--accent);margin-left:6px;}
+  .aviso{background:rgba(185,121,31,.12);border:1px dashed var(--warn);border-radius:8px;padding:10px 12px;font-size:13px;margin:10px 0;}
+  .aviso strong{color:var(--warn);}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🍺 Manual do App — Arena Beach</h1>
+  <p>Guia rápido de como usar o sistema de comandas no dia a dia.</p>
+  <a class="voltar" href="/">← Abrir o app</a>
+</header>
+
+<main>
+
+  <div class="toc">
+    <h2>Pular para</h2>
+    <a href="#instalar">Instalar no celular</a>
+    <a href="#login">Entrar no app</a>
+    <a href="#abertas">Abrir e lançar comandas</a>
+    <a href="#fiado">Fiado</a>
+    <a href="#clientes">Clientes e cobrança por WhatsApp</a>
+    <a href="#estoque">Estoque</a>
+    <a href="#historico">Histórico e fechamento do dia</a>
+    <a href="#voz">Comando de voz</a>
+    <a href="#duvidas">Dúvidas comuns</a>
+  </div>
+
+  <section id="instalar">
+    <h2>📲 Instalar no celular</h2>
+    <p>O app funciona como um aplicativo de verdade — sem precisar abrir navegador toda hora.</p>
+    <h3>Android (Chrome)</h3>
+    <ol>
+      <li>Abra <code>arena-beach.vercel.app</code> no Chrome.</li>
+      <li>Toque nos três pontinhos (⋮) no canto superior e escolha <strong>"Instalar app"</strong> (ou toque no banner que aparece embaixo).</li>
+      <li>Pronto — vai aparecer um ícone de chopp 🍺 na tela inicial, igual qualquer outro app.</li>
+    </ol>
+    <h3>iPhone (Safari)</h3>
+    <ol>
+      <li>Abra <code>arena-beach.vercel.app</code> no Safari (precisa ser o Safari, não funciona no Chrome do iPhone).</li>
+      <li>Toque no ícone de compartilhar (quadrado com uma seta ↑).</li>
+      <li>Escolha <strong>"Adicionar à Tela de Início"</strong>.</li>
+    </ol>
+  </section>
+
+  <section id="login">
+    <h2>🔑 Entrar no app</h2>
+    <p>Use o usuário e senha combinados com o responsável pelo bar. A sessão fica ativa por <strong>12 horas</strong> — depois disso, pede login de novo.</p>
+    <div class="aviso"><strong>Atenção:</strong> depois de 5 tentativas de senha errada, o login fica bloqueado por 15 minutos, por segurança.</div>
+  </section>
+
+  <section id="abertas">
+    <h2>🧾 Abrir e lançar comandas — aba "Abertas"</h2>
+    <h3>Abrir uma comanda nova</h3>
+    <p>Digite o nome do cliente (e o WhatsApp, se quiser — isso já cadastra o cliente automaticamente) e toque em <strong>Abrir</strong>.</p>
+    <h3>Lançar itens</h3>
+    <p>Toque na comanda pra abrir os detalhes. Lá dentro você tem 3 formas de lançar item:</p>
+    <ul>
+      <li><strong>Produto cadastrado:</strong> aparece uma lista dos produtos do Estoque — toque no <code>+</code> ao lado do item pra lançar 1 unidade (já desconta do estoque automaticamente).</li>
+      <li><strong>Item avulso:</strong> quando não é um produto cadastrado (ex: taxa de serviço). Preencha descrição e valor e toque em <code>+</code>.</li>
+      <li><strong>Vários de uma vez:</strong> toque em "📋 Adicionar vários itens de uma vez" e cole uma lista, uma linha por item — veja formatos em <a href="#voz">Comando de voz</a> mais abaixo, funciona junto.</li>
+    </ul>
+    <h3>Fechar a comanda</h3>
+    <p>Escolha a forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra fechar, ou toque em <strong>"Fechar como Fiado"</strong> se o cliente vai pagar depois.</p>
+    <div class="aviso">Dá pra excluir uma comanda inteira (botão vermelho no fim da tela), mas cuidado: não tem como desfazer.</div>
+  </section>
+
+  <section id="fiado">
+    <h2>📒 Fiado</h2>
+    <p>Mostra todo mundo que está devendo, com o total geral no topo. Toque em <strong>"Quitar fiado"</strong> quando o cliente pagar, ou "Ver itens" pra conferir o que ele consumiu.</p>
+  </section>
+
+  <section id="clientes">
+    <h2>👤 Clientes e cobrança por WhatsApp</h2>
+    <p>Toda vez que você abre uma comanda com WhatsApp preenchido, o cliente já fica salvo aqui automaticamente. Também dá pra cadastrar direto nessa aba.</p>
+    <ul>
+      <li>Clientes com fiado em aberto há <strong>7 dias ou mais</strong> aparecem destacados em vermelho no topo da lista.</li>
+      <li>O botão <strong>📱 Mensagem</strong> abre o WhatsApp já com uma mensagem pronta (incluindo o valor devido, se for o caso) — só revisar e enviar.</li>
+    </ul>
+    <div class="aviso">O envio da mensagem <strong>não é automático</strong> — o app avisa e prepara o texto, mas alguém precisa tocar em enviar.</div>
+  </section>
+
+  <section id="estoque">
+    <h2>📦 Estoque</h2>
+    <h3>Cadastrar um produto</h3>
+    <p>Preencha nome, categoria (ex: Bebidas, Petiscos), preço, estoque inicial e o mínimo (opcional — avisa quando estiver acabando) e toque em <strong>Cadastrar produto</strong>.</p>
+    <h3>Cadastrar vários de uma vez</h3>
+    <p>Toque em "📋 Cadastrar vários produtos de uma vez" e cole no formato:</p>
+    <p><code>## Bebidas<br>Cerveja; 8,00; 50; 10<br>Refrigerante; 7,50; 30<br><br>## Petiscos<br>Batata frita; 25,00; 20</code></p>
+    <p>Cada linha é <code>nome; preço; estoque; mínimo</code> (mínimo é opcional). As linhas com <code>## Nome</code> definem a categoria dos produtos que vêm depois.</p>
+    <h3>Repor ou ajustar estoque</h3>
+    <p>Use os botões <strong>-1 / +1</strong> pra ajuste rápido, ou digite uma quantidade e toque em <strong>Repor</strong> quando chegar uma caixa nova, por exemplo.</p>
+    <p>Produtos com estoque baixo ou esgotado ganham um aviso destacado na listagem.</p>
+  </section>
+
+  <section id="historico">
+    <h2>📅 Histórico e fechamento do dia</h2>
+    <p>Mostra todas as comandas já fechadas, agrupadas por dia. Cada dia tem um resumo no topo com o <strong>total geral</strong> e o total <strong>separado por forma de pagamento</strong> (dinheiro, pix, cartão, fiado quitado) — ótimo pra conferir o caixa no fim do expediente.</p>
+  </section>
+
+  <section id="voz">
+    <h2>🎤 Comando de voz</h2>
+    <p>Em vários lugares do app (lançar item na comanda, cadastrar produto) tem um botão de microfone. Ele funciona assim:</p>
+    <ul>
+      <li>Toque, fale o nome do produto (ex: "Cerveja") e o app tenta reconhecer.</li>
+      <li>Se reconhecer um produto já cadastrado, lança direto na comanda.</li>
+      <li>Se não reconhecer, preenche o campo de descrição pra você completar o valor manualmente.</li>
+    </ul>
+    <div class="aviso">O microfone só funciona com o app aberto por <strong>https://</strong> (como já está, no <code>arena-beach.vercel.app</code>) — o navegador vai pedir permissão de microfone na primeira vez.</div>
+  </section>
+
+  <section id="duvidas">
+    <h2>❓ Dúvidas comuns</h2>
+    <h3>Abri uma comanda com nome errado ou duplicado, e agora?</h3>
+    <p>Enquanto a comanda estiver <strong>aberta</strong>, não dá pra repetir o mesmo nome de outra aberta — evita confusão. Se abriu errado, é só excluir e abrir de novo.</p>
+    <h3>Fechei como pago, mas era pra ser fiado (ou o contrário)</h3>
+    <p>No Histórico, abra a comanda e toque em <strong>"Reabrir comanda"</strong> — ela volta pra "Abertas" e você fecha de novo do jeito certo.</p>
+    <h3>Os dados somem se fechar o navegador?</h3>
+    <p>Não — tudo fica salvo direto no banco de dados (Supabase), em tempo real. Se abrir em dois celulares ao mesmo tempo, os dois ficam sincronizados automaticamente.</p>
+    <h3>Esqueci a senha</h3>
+    <p>Só quem tem acesso ao painel do banco de dados consegue redefinir — fale com quem administra o sistema.</p>
+  </section>
+
+</main>
+</body>
+</html>

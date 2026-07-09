@@ -96,6 +96,7 @@
     <input id="login-senha" type="password" placeholder="Senha" autocomplete="current-password" />
     <div class="login-error" id="login-error"></div>
     <button class="btn btn-accent" onclick="onLogin()">Entrar</button>
+    <a href="/ajuda.html" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:14px;color:var(--muted);font-size:13px;text-decoration:none;">❓ Como usar o app</a>
   </div>
 </div>
 
@@ -103,7 +104,10 @@
 <header>
   <div class="row">
     <h1>🍺 Comandas do Bar</h1>
-    <button class="logout-btn" onclick="onLogout()">Sair</button>
+    <div style="display:flex;gap:4px;align-items:center;">
+      <a href="/ajuda.html" target="_blank" rel="noopener" class="logout-btn" style="text-decoration:none;">❓ Ajuda</a>
+      <button class="logout-btn" onclick="onLogout()">Sair</button>
+    </div>
   </div>
   <nav>
     <button data-tab="abertas" class="active">Abertas</button>
