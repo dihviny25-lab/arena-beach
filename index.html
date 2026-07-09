@@ -130,7 +130,7 @@ let clientes = [];
 let turnos = [];
 let openComandaId = null; // which detail sheet is open
 let sessaoAtual = null; // { token, role, usuario }
-let adminSubTab = "caixa";
+let adminSubTab = "resumo";
 let editandoProdutoId = null;
 
 const app = document.getElementById("app");
@@ -582,17 +582,94 @@ window.setAdminSubTab = (s) => { adminSubTab = s; render(); };
 
 function renderAdmin(){
   let html = `
-    <div class="row" style="gap:6px;margin-bottom:12px;">
-      <button class="btn ${adminSubTab==='caixa'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('caixa')">Caixa</button>
-      <button class="btn ${adminSubTab==='vendas'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('vendas')">Vendas</button>
-      <button class="btn ${adminSubTab==='excluidas'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('excluidas')">Excluídas</button>
+    <div class="row" style="gap:4px;margin-bottom:12px;">
+      <button class="btn ${adminSubTab==='resumo'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('resumo')">Resumo</button>
+      <button class="btn ${adminSubTab==='caixa'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('caixa')">Caixa</button>
+      <button class="btn ${adminSubTab==='vendas'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('vendas')">Vendas</button>
+      <button class="btn ${adminSubTab==='excluidas'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('excluidas')">Excluídas</button>
     </div>
   `;
-  if(adminSubTab === "caixa") html += renderCaixaSection();
+  if(adminSubTab === "resumo") html += renderResumoSection();
+  else if(adminSubTab === "caixa") html += renderCaixaSection();
   else if(adminSubTab === "vendas") html += renderVendasSection();
   else html += renderExcluidasSection();
   app.innerHTML = html;
   if(adminSubTab === "vendas") desenharGraficos();
+}
+
+function renderResumoSection(){
+  const abertas = comandas.filter(c => c.status === "aberta");
+  const fiados = comandas.filter(c => c.status === "fiado");
+  const inicio30 = new Date(Date.now() - 30 * 86400000);
+  const pagas30 = comandas.filter(c => c.status === "paga" && c.fechada_em && new Date(c.fechada_em) >= inicio30);
+  const faturado30 = pagas30.reduce((s,c) => s + c.total, 0);
+  const ticketMedio = pagas30.length ? faturado30 / pagas30.length : 0;
+  const totalFiado = fiados.reduce((s,c) => s + c.total, 0);
+
+  const cards = [
+    { label: "Comandas abertas", valor: abertas.length },
+    { label: "Fechadas (30d)", valor: pagas30.length },
+    { label: "Faturado (30d)", valor: fmt(faturado30) },
+    { label: "Ticket médio (30d)", valor: fmt(ticketMedio) },
+    { label: "Em fiado agora", valor: `${fiados.length} · ${fmt(totalFiado)}` },
+  ];
+
+  let html = `<div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:4px;">` +
+    cards.map(c => `
+      <div class="card" style="flex:1;min-width:130px;text-align:center;">
+        <div class="muted" style="font-size:11px;text-transform:uppercase;">${c.label}</div>
+        <div class="total" style="margin-top:4px;">${c.valor}</div>
+      </div>
+    `).join("") + `</div>`;
+
+  // Devendo — TODAS as comandas em fiado, não só as atrasadas
+  html += `<div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;">Devendo (${fiados.length})</div>`;
+  if(fiados.length === 0){
+    html += `<div class="empty">Ninguém devendo no momento. 🎉</div>`;
+  } else {
+    const comDias = fiados.map(c => ({ c, dias: diasDesde(c.fechada_em || c.criada_em) }))
+      .sort((a,b) => b.dias - a.dias);
+    html += comDias.map(({c, dias}) => {
+      const atrasado = dias >= DIAS_ALERTA_FIADO;
+      return `
+      <div class="card paper-card">
+        <div class="row">
+          <div><strong>${escapeHtml(c.nome)}</strong>
+            ${atrasado ? `<span class="badge badge-fiado" style="background:rgba(179,57,43,.15);color:var(--danger);">ATRASADO · ${dias}d</span>` : `<span class="badge badge-fiado">${dias}d</span>`}
+            <div class="muted">desde ${fmtDate(c.fechada_em || c.criada_em)}</div>
+          </div>
+          <div class="total" style="color:var(--warn)">${fmt(c.total)}</div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  // Clientes que mais consomem (histórico completo, comandas paga+fiado)
+  const totalPorCliente = {};
+  comandas.forEach(c => {
+    if(!c.cliente_id) return;
+    if(c.status !== "paga" && c.status !== "fiado") return;
+    totalPorCliente[c.cliente_id] = (totalPorCliente[c.cliente_id] || 0) + c.total;
+  });
+  const rankingClientes = Object.entries(totalPorCliente)
+    .map(([clienteId, total]) => ({ cliente: clientes.find(cl => cl.id === clienteId), total }))
+    .filter(r => r.cliente)
+    .sort((a,b) => b.total - a.total)
+    .slice(0, 10);
+
+  html += `<div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;">Clientes que mais consomem (histórico)</div>`;
+  if(rankingClientes.length === 0){
+    html += `<div class="empty">Nenhum consumo vinculado a cliente ainda.</div>`;
+  } else {
+    html += rankingClientes.map(({cliente, total}, i) => `
+      <div class="item-row">
+        <span>${i+1}. ${escapeHtml(cliente.nome)}</span>
+        <strong>${fmt(total)}</strong>
+      </div>
+    `).join("");
+  }
+
+  return html;
 }
 
 function renderCaixaSection(){
@@ -686,11 +763,15 @@ function renderVendasSection(){
   return `
     <div class="card">
       <strong>Faturamento — últimos 30 dias</strong>
-      <canvas id="grafico-faturamento" height="180"></canvas>
+      <div style="position:relative;height:220px;margin-top:8px;">
+        <canvas id="grafico-faturamento"></canvas>
+      </div>
     </div>
     <div class="card">
       <strong>Produtos mais vendidos — últimos 30 dias</strong>
-      <canvas id="grafico-ranking" height="180"></canvas>
+      <div style="position:relative;height:220px;margin-top:8px;">
+        <canvas id="grafico-ranking"></canvas>
+      </div>
     </div>
     <div id="reposicao-area"></div>
   `;
@@ -736,7 +817,7 @@ function desenharGraficos(){
     chartFaturamento = new Chart(ctxF, {
       type: "line",
       data: { labels: dias, datasets: [{ label: "R$", data: valores, borderColor: "#3f8a4c", backgroundColor: "rgba(63,138,76,.15)", fill: true, tension: .25 }] },
-      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
     });
   }
 
@@ -752,7 +833,7 @@ function desenharGraficos(){
     chartRanking = new Chart(ctxR, {
       type: "bar",
       data: { labels: ranking.map(r => r.produto.nome), datasets: [{ label: "Unidades", data: ranking.map(r => r.qtd), backgroundColor: "#b9791f" }] },
-      options: { indexAxis: "y", plugins: { legend: { display: false } } }
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: "y", plugins: { legend: { display: false } } }
     });
   }
 
@@ -787,8 +868,10 @@ function diasDesde(data){
   return Math.floor((Date.now() - new Date(data).getTime()) / 86400000);
 }
 
+const DIAS_ALERTA_FIADO = 10;
+
 function renderClientes(){
-  const DIAS_ALERTA = 7;
+  const DIAS_ALERTA = DIAS_ALERTA_FIADO;
   let html = `
     <div class="card">
       <div class="form-row">
