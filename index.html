@@ -131,6 +131,7 @@ let turnos = [];
 let openComandaId = null; // which detail sheet is open
 let sessaoAtual = null; // { token, role, usuario }
 let adminSubTab = "caixa";
+let editandoProdutoId = null;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -293,6 +294,17 @@ async function excluirProduto(produtoId){
   const { error } = await sb.rpc("admin_excluir_produto", { p_token: sessaoAtual.token, p_produto_id: produtoId });
   if(error){ toast(error.message || "Erro ao excluir produto"); console.error(error); return; }
   toast("Produto excluído");
+  await loadAll();
+}
+
+async function editarProduto(produtoId, nome, preco, categoria, minimo){
+  const { error } = await sb.rpc("admin_editar_produto", {
+    p_token: sessaoAtual.token, p_produto_id: produtoId, p_nome: nome, p_preco: preco,
+    p_categoria: categoria, p_minimo: minimo
+  });
+  if(error){ toast(error.message || "Erro ao editar produto"); console.error(error); return; }
+  toast("Produto atualizado");
+  editandoProdutoId = null;
   await loadAll();
 }
 
@@ -842,6 +854,23 @@ function produtoCardHtml(p, isAdmin){
       </div>
     </div>`;
   }
+  if(editandoProdutoId === p.id){
+    return `
+    <div class="card paper-card">
+      <div class="form-row">
+        <input id="edit-nome-${p.id}" placeholder="Nome" value="${escapeHtml(p.nome)}" />
+        <input id="edit-categoria-${p.id}" placeholder="Categoria" value="${escapeHtml(p.categoria || '')}" />
+      </div>
+      <div class="form-row">
+        <input id="edit-preco-${p.id}" placeholder="Preço" inputmode="decimal" value="${p.preco}" />
+        <input id="edit-minimo-${p.id}" placeholder="Mínimo" inputmode="numeric" value="${p.estoque_minimo}" />
+      </div>
+      <div class="form-row">
+        <button class="btn btn-accent" onclick="onSalvarEdicaoProduto('${p.id}')">Salvar</button>
+        <button class="btn btn-ghost" onclick="onCancelarEdicaoProduto()">Cancelar</button>
+      </div>
+    </div>`;
+  }
   return `
   <div class="card paper-card">
     <div class="row">
@@ -856,6 +885,9 @@ function produtoCardHtml(p, isAdmin){
     <div class="form-row" style="margin-top:10px;">
       <input id="repor-${p.id}" placeholder="Qtd. para repor" inputmode="numeric" />
       <button class="btn btn-accent" onclick="onReporEstoque('${p.id}')">Repor</button>
+    </div>
+    <div class="form-row">
+      <button class="btn btn-ghost" onclick="onEditarProduto('${p.id}')">Editar</button>
       <button class="btn btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
     </div>
   </div>`;
@@ -1184,6 +1216,16 @@ window.onReporEstoque = (produtoId) => {
   if(!qtd || qtd <= 0){ toast("Informe uma quantidade válida"); return; }
   ajustarEstoque(produtoId, qtd);
   inp.value = "";
+};
+window.onEditarProduto = (produtoId) => { editandoProdutoId = produtoId; render(); };
+window.onCancelarEdicaoProduto = () => { editandoProdutoId = null; render(); };
+window.onSalvarEdicaoProduto = (produtoId) => {
+  const nome = document.getElementById(`edit-nome-${produtoId}`).value;
+  const categoria = document.getElementById(`edit-categoria-${produtoId}`).value;
+  const preco = parseFloat(document.getElementById(`edit-preco-${produtoId}`).value.replace(",","."));
+  const minimo = parseInt(document.getElementById(`edit-minimo-${produtoId}`).value, 10);
+  if(!nome.trim() || isNaN(preco) || preco < 0){ toast("Preencha nome e preço válidos"); return; }
+  editarProduto(produtoId, nome, preco, categoria, isNaN(minimo) ? null : minimo);
 };
 window.excluirCliente = excluirCliente;
 window.onCadastrarCliente = () => {
