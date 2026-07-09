@@ -1,7 +1,7 @@
 {
-  "name": "Comandas do Bar - Arena Beach",
-  "short_name": "Arena Beach",
-  "description": "Controle de comandas, fiado, estoque e clientes do Arena Beach",
+  "name": "Comandas do Bar - Arena Araçá",
+  "short_name": "Arena Araçá",
+  "description": "Controle de comandas, fiado, estoque e clientes do Arena Araçá",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

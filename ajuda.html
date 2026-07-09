@@ -42,7 +42,7 @@
 <body>
 
 <header>
-  <h1>🍺 Manual do App — Arena Beach</h1>
+  <h1>🍺 Manual do App — Arena Araçá</h1>
   <p>Guia rápido de como usar o sistema de comandas no dia a dia.</p>
   <a class="voltar" href="/">← Abrir o app</a>
 </header>
@@ -53,11 +53,14 @@
     <h2>Pular para</h2>
     <a href="#instalar">Instalar no celular</a>
     <a href="#login">Entrar no app</a>
+    <a href="#papeis">Frente de caixa x Admin</a>
     <a href="#abertas">Abrir e lançar comandas</a>
     <a href="#fiado">Fiado</a>
     <a href="#clientes">Clientes e cobrança por WhatsApp</a>
     <a href="#estoque">Estoque</a>
-    <a href="#historico">Histórico e fechamento do dia</a>
+    <a href="#caixa-fisico">Caixa físico (admin)</a>
+    <a href="#vendas">Painel de vendas (admin)</a>
+    <a href="#historico">Histórico (admin)</a>
     <a href="#voz">Comando de voz</a>
     <a href="#duvidas">Dúvidas comuns</a>
   </div>
@@ -85,6 +88,17 @@
     <div class="aviso"><strong>Atenção:</strong> depois de 5 tentativas de senha errada, o login fica bloqueado por 15 minutos, por segurança.</div>
   </section>
 
+  <section id="papeis">
+    <h2>👥 Frente de caixa x Admin</h2>
+    <p>O app tem dois tipos de login, com telas diferentes:</p>
+    <ul>
+      <li><strong>Frente de caixa:</strong> abre e lança comandas, marca fiado, cadastra/edita clientes. Não vê Estoque com botões de edição (só consulta preço/quantidade), não vê Histórico nem o painel Admin, e não pode excluir comanda.</li>
+      <li><strong>Admin:</strong> tudo que o caixa faz, mais controle total do Estoque, Histórico, abertura/fechamento de caixa físico, painel de vendas, e exclusão de comanda (com motivo).</li>
+    </ul>
+    <p>Cada usuário mostra seu nome e papel no canto superior direito do app (ex: "Fulano (admin)").</p>
+    <div class="aviso">Essa separação é aplicada no servidor, não só escondida na tela — mesmo tentando burlar pelo celular, o caixa não consegue alterar estoque nem excluir comanda.</div>
+  </section>
+
   <section id="abertas">
     <h2>🧾 Abrir e lançar comandas — aba "Abertas"</h2>
     <h3>Abrir uma comanda nova</h3>
@@ -98,7 +112,7 @@
     </ul>
     <h3>Fechar a comanda</h3>
     <p>Escolha a forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra fechar, ou toque em <strong>"Fechar como Fiado"</strong> se o cliente vai pagar depois.</p>
-    <div class="aviso">Dá pra excluir uma comanda inteira (botão vermelho no fim da tela), mas cuidado: não tem como desfazer.</div>
+    <div class="aviso"><strong>Só admin</strong> pode excluir uma comanda, e precisa digitar o motivo. A comanda não é apagada de verdade — ela fica guardada na aba Admin → Excluídas, com motivo, data e quem excluiu.</div>
   </section>
 
   <section id="fiado">
@@ -118,6 +132,7 @@
 
   <section id="estoque">
     <h2>📦 Estoque</h2>
+    <div class="aviso">O frente de caixa vê essa aba só pra consulta (nome, categoria, preço, quantidade) — cadastrar, ajustar ou excluir produto é <strong>só admin</strong>.</div>
     <h3>Cadastrar um produto</h3>
     <p>Preencha nome, categoria (ex: Bebidas, Petiscos), preço, estoque inicial e o mínimo (opcional — avisa quando estiver acabando) e toque em <strong>Cadastrar produto</strong>.</p>
     <h3>Cadastrar vários de uma vez</h3>
@@ -126,12 +141,32 @@
     <p>Cada linha é <code>nome; preço; estoque; mínimo</code> (mínimo é opcional). As linhas com <code>## Nome</code> definem a categoria dos produtos que vêm depois.</p>
     <h3>Repor ou ajustar estoque</h3>
     <p>Use os botões <strong>-1 / +1</strong> pra ajuste rápido, ou digite uma quantidade e toque em <strong>Repor</strong> quando chegar uma caixa nova, por exemplo.</p>
-    <p>Produtos com estoque baixo ou esgotado ganham um aviso destacado na listagem.</p>
+    <p>Produtos com estoque baixo ou esgotado ganham um aviso destacado na listagem. Vender um produto pela comanda desconta o estoque automaticamente — isso funciona pros dois papéis, só a edição manual é restrita.</p>
+  </section>
+
+  <section id="caixa-fisico">
+    <h2>💰 Caixa físico — aba Admin → Caixa</h2>
+    <p>Só confere o <strong>dinheiro vivo</strong> da gaveta (pix e cartão não precisam contagem, já caem direto na conta).</p>
+    <h3>Abrir o caixa</h3>
+    <p>No começo do turno, informe quanto tem de troco na gaveta e toque em <strong>Abrir caixa</strong>.</p>
+    <h3>Fechar o caixa</h3>
+    <p>No fim do turno, conte o dinheiro físico, digite o valor e toque em <strong>Fechar caixa</strong>. O app calcula sozinho quanto <em>deveria</em> ter (abertura + vendas em dinheiro do turno) e mostra a diferença entre o esperado e o contado.</p>
+    <div class="aviso">Só é possível ter <strong>um turno aberto por vez</strong>. O histórico dos últimos fechamentos fica logo abaixo, com a diferença de cada um.</div>
+  </section>
+
+  <section id="vendas">
+    <h2>📈 Painel de vendas — aba Admin → Vendas</h2>
+    <p>Mostra três coisas, calculadas com base nos últimos 30 dias:</p>
+    <ul>
+      <li><strong>Faturamento por dia:</strong> gráfico de linha com o total vendido (comandas pagas) dia a dia.</li>
+      <li><strong>Produtos mais vendidos:</strong> ranking dos 10 produtos com mais unidades vendidas no período.</li>
+      <li><strong>Previsão de reposição:</strong> pra cada produto, o app calcula a média de vendas por dia e avisa quando a previsão é de <strong>acabar em até 3 dias</strong> — ajuda a comprar antes de faltar.</li>
+    </ul>
   </section>
 
   <section id="historico">
-    <h2>📅 Histórico e fechamento do dia</h2>
-    <p>Mostra todas as comandas já fechadas, agrupadas por dia. Cada dia tem um resumo no topo com o <strong>total geral</strong> e o total <strong>separado por forma de pagamento</strong> (dinheiro, pix, cartão, fiado quitado) — ótimo pra conferir o caixa no fim do expediente.</p>
+    <h2>📅 Histórico — aba admin</h2>
+    <p>Mostra todas as comandas já fechadas, agrupadas por dia. Cada dia tem um resumo no topo com o <strong>total geral</strong> e o total <strong>separado por forma de pagamento</strong> (dinheiro, pix, cartão, fiado quitado).</p>
   </section>
 
   <section id="voz">
@@ -150,7 +185,9 @@
     <h3>Abri uma comanda com nome errado ou duplicado, e agora?</h3>
     <p>Enquanto a comanda estiver <strong>aberta</strong>, não dá pra repetir o mesmo nome de outra aberta — evita confusão. Se abriu errado, é só excluir e abrir de novo.</p>
     <h3>Fechei como pago, mas era pra ser fiado (ou o contrário)</h3>
-    <p>No Histórico, abra a comanda e toque em <strong>"Reabrir comanda"</strong> — ela volta pra "Abertas" e você fecha de novo do jeito certo.</p>
+    <p>Abra a comanda (no Histórico, se for admin, ou peça pro admin) e toque em <strong>"Reabrir comanda"</strong> — ela volta pra "Abertas" e você fecha de novo do jeito certo. Isso o frente de caixa também pode fazer.</p>
+    <h3>Errei o nome de uma comanda, preciso excluir</h3>
+    <p>Só admin exclui. Se você é frente de caixa, avise o admin — ele exclui informando o motivo, e a comanda fica guardada (não some de verdade) na aba Admin → Excluídas.</p>
     <h3>Os dados somem se fechar o navegador?</h3>
     <p>Não — tudo fica salvo direto no banco de dados (Supabase), em tempo real. Se abrir em dois celulares ao mesmo tempo, os dois ficam sincronizados automaticamente.</p>
     <h3>Esqueci a senha</h3>

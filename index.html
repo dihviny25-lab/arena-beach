@@ -12,8 +12,9 @@
 <meta name="theme-color" content="#e9e0c9">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Arena Beach">
+<meta name="apple-mobile-web-app-title" content="Arena Araçá">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=Kalam:wght@700&display=swap" rel="stylesheet">
@@ -104,18 +105,13 @@
 <header>
   <div class="row">
     <h1>🍺 Comandas do Bar</h1>
-    <div style="display:flex;gap:4px;align-items:center;">
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="muted" id="role-badge" style="font-size:12px;"></span>
       <a href="/ajuda.html" target="_blank" rel="noopener" class="logout-btn" style="text-decoration:none;">❓ Ajuda</a>
       <button class="logout-btn" onclick="onLogout()">Sair</button>
     </div>
   </div>
-  <nav>
-    <button data-tab="abertas" class="active">Abertas</button>
-    <button data-tab="fiado">Fiado</button>
-    <button data-tab="clientes">Clientes</button>
-    <button data-tab="estoque">Estoque</button>
-    <button data-tab="historico">Histórico</button>
-  </nav>
+  <nav id="nav-tabs"></nav>
 </header>
 
 <main id="app"></main>
@@ -131,7 +127,10 @@ let tab = "abertas";
 let comandas = []; // all, joined with itens totals
 let produtos = [];
 let clientes = [];
+let turnos = [];
 let openComandaId = null; // which detail sheet is open
+let sessaoAtual = null; // { token, role, usuario }
+let adminSubTab = "caixa";
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -167,6 +166,12 @@ async function loadAll(){
   });
   produtos = prods;
   clientes = clis;
+
+  if(sessaoAtual && sessaoAtual.role === "admin"){
+    const { data: turnosData, error: e5 } = await sb.rpc("admin_obter_turnos", { p_token: sessaoAtual.token });
+    if(e5){ console.error(e5); } else { turnos = turnosData || []; }
+  }
+
   render();
 }
 
@@ -224,12 +229,11 @@ function linkWhatsapp(celular, mensagem){
 async function excluirComanda(comandaId){
   const c = comandas.find(x => x.id === comandaId);
   if(!c) return;
-  const msg = c.itens.length
-    ? `Excluir a comanda de ${c.nome} e seus ${c.itens.length} item(ns)? Essa ação não pode ser desfeita.`
-    : `Excluir a comanda de ${c.nome}? Essa ação não pode ser desfeita.`;
-  if(!confirm(msg)) return;
-  const { error } = await sb.from("comandas").delete().eq("id", comandaId);
-  if(error){ toast("Erro ao excluir comanda"); console.error(error); return; }
+  const motivo = prompt(`Motivo da exclusão da comanda de ${c.nome}:`);
+  if(motivo === null) return;
+  if(!motivo.trim()){ toast("Informe o motivo da exclusão"); return; }
+  const { error } = await sb.rpc("admin_excluir_comanda", { p_token: sessaoAtual.token, p_comanda_id: comandaId, p_motivo: motivo.trim() });
+  if(error){ toast(error.message || "Erro ao excluir comanda"); console.error(error); return; }
   toast("Comanda excluída");
   openComandaId = null;
   await loadAll();
@@ -259,16 +263,17 @@ async function addProdutoItem(comandaId, produtoId){
 async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria){
   nome = nome.trim();
   preco = parseFloat(String(preco).replace(",","."));
-  estoque = parseInt(estoque, 10) || 0;
-  const minimo = parseInt(estoqueMinimo, 10);
-  categoria = (categoria || "").trim() || "Outros";
+  const estoqueNum = parseInt(estoque, 10) || 0;
+  const minimoNum = parseInt(estoqueMinimo, 10);
+  const categoriaFinal = (categoria || "").trim() || null;
   if(!nome || isNaN(preco) || preco < 0){ toast("Preencha nome e preço"); return; }
-  const payload = { nome, preco, estoque, categoria };
-  if(!isNaN(minimo)) payload.estoque_minimo = minimo;
-  const { error } = await sb.from("produtos").insert(payload);
+  const { error } = await sb.rpc("admin_cadastrar_produto", {
+    p_token: sessaoAtual.token, p_nome: nome, p_preco: preco, p_estoque: estoqueNum,
+    p_minimo: isNaN(minimoNum) ? null : minimoNum, p_categoria: categoriaFinal
+  });
   if(error){
     if(error.code === "23505"){ toast("Já existe um produto com esse nome"); }
-    else { toast("Erro ao cadastrar produto"); console.error(error); }
+    else { toast(error.message || "Erro ao cadastrar produto"); console.error(error); }
     return;
   }
   toast("Produto cadastrado");
@@ -276,8 +281,8 @@ async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria){
 }
 
 async function ajustarEstoque(produtoId, delta){
-  const { error } = await sb.rpc("ajustar_estoque", { p_produto_id: produtoId, p_delta: delta });
-  if(error){ toast("Erro ao ajustar estoque"); console.error(error); return; }
+  const { error } = await sb.rpc("admin_ajustar_estoque", { p_token: sessaoAtual.token, p_produto_id: produtoId, p_delta: delta });
+  if(error){ toast(error.message || "Erro ao ajustar estoque"); console.error(error); return; }
   await loadAll();
 }
 
@@ -285,8 +290,8 @@ async function excluirProduto(produtoId){
   const p = produtos.find(x => x.id === produtoId);
   if(!p) return;
   if(!confirm(`Excluir o produto "${p.nome}" do estoque?`)) return;
-  const { error } = await sb.from("produtos").delete().eq("id", produtoId);
-  if(error){ toast("Erro ao excluir produto"); console.error(error); return; }
+  const { error } = await sb.rpc("admin_excluir_produto", { p_token: sessaoAtual.token, p_produto_id: produtoId });
+  if(error){ toast(error.message || "Erro ao excluir produto"); console.error(error); return; }
   toast("Produto excluído");
   await loadAll();
 }
@@ -518,13 +523,14 @@ window.onCadastrarProdutosEmLote = async function(){
 
   if(rows.length === 0){ toast("Nenhum produto válido. " + erros.join("; ")); return; }
 
-  const { data, error } = await sb.from("produtos")
-    .upsert(rows, { onConflict: "nome", ignoreDuplicates: true })
-    .select();
-  if(error){ toast("Erro ao cadastrar produtos"); console.error(error); return; }
+  const { data, error } = await sb.rpc("admin_cadastrar_produtos_em_lote", {
+    p_token: sessaoAtual.token, p_produtos: rows
+  });
+  if(error){ toast(error.message || "Erro ao cadastrar produtos"); console.error(error); return; }
 
-  const adicionados = data.length;
-  const pulados = rows.length - adicionados;
+  const resultado = data && data[0];
+  const adicionados = resultado ? resultado.adicionados : 0;
+  const pulados = resultado ? resultado.pulados : 0;
   await loadAll();
   toast(`${adicionados} produto(s) cadastrado(s).`
     + (pulados ? ` ${pulados} já existiam (ignorado).` : "")
@@ -554,8 +560,215 @@ function render(){
   else if(tab === "fiado") renderFiado();
   else if(tab === "clientes") renderClientes();
   else if(tab === "estoque") renderEstoque();
-  else renderHistorico();
+  else if(tab === "admin") renderAdmin();
+  else if(tab === "historico") renderHistorico();
   renderDetailSheet();
+}
+
+// ---------- Admin: Caixa / Vendas / Excluídas ----------
+window.setAdminSubTab = (s) => { adminSubTab = s; render(); };
+
+function renderAdmin(){
+  let html = `
+    <div class="row" style="gap:6px;margin-bottom:12px;">
+      <button class="btn ${adminSubTab==='caixa'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('caixa')">Caixa</button>
+      <button class="btn ${adminSubTab==='vendas'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('vendas')">Vendas</button>
+      <button class="btn ${adminSubTab==='excluidas'?'btn-accent':'btn-ghost'}" style="flex:1;" onclick="setAdminSubTab('excluidas')">Excluídas</button>
+    </div>
+  `;
+  if(adminSubTab === "caixa") html += renderCaixaSection();
+  else if(adminSubTab === "vendas") html += renderVendasSection();
+  else html += renderExcluidasSection();
+  app.innerHTML = html;
+  if(adminSubTab === "vendas") desenharGraficos();
+}
+
+function renderCaixaSection(){
+  const aberto = turnos.find(t => !t.fechado_em);
+  let html = "";
+  if(!aberto){
+    html += `
+      <div class="card">
+        <div class="muted" style="margin-bottom:8px;">Nenhum turno de caixa aberto.</div>
+        <div class="form-row">
+          <input id="caixa-abertura" placeholder="Valor de abertura (troco)" inputmode="decimal" />
+          <button class="btn btn-accent" onclick="onAbrirCaixa()">Abrir caixa</button>
+        </div>
+      </div>
+    `;
+  } else {
+    html += `
+      <div class="card">
+        <div class="row"><strong>Caixa aberto</strong><span class="total">${fmt(aberto.valor_abertura)}</span></div>
+        <div class="muted">Aberto por ${escapeHtml(aberto.aberto_por)} em ${fmtDate(aberto.aberto_em)}</div>
+        <div class="form-row" style="margin-top:12px;">
+          <input id="caixa-contado" placeholder="Valor contado na gaveta" inputmode="decimal" />
+        </div>
+        <input id="caixa-obs" placeholder="Observação (opcional)" style="margin-bottom:10px;" />
+        <button class="btn btn-warn" style="width:100%;" onclick="onFecharCaixa()">Fechar caixa</button>
+      </div>
+    `;
+  }
+  const fechados = turnos.filter(t => t.fechado_em);
+  if(fechados.length){
+    html += `<div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;">Últimos fechamentos</div>`;
+    html += fechados.map(t => {
+      const bateu = Math.abs(t.diferenca) < 0.01;
+      return `
+      <div class="card paper-card">
+        <div class="row">
+          <div><strong>${fmtDate(t.fechado_em)}</strong>
+            <div class="muted">Aberto ${fmt(t.valor_abertura)} · Esperado ${fmt(t.valor_esperado)} · Contado ${fmt(t.valor_contado)}</div>
+          </div>
+          <div class="total" style="color:${bateu ? 'var(--accent)' : 'var(--danger)'}">${t.diferenca >= 0 ? '+' : ''}${fmt(t.diferenca)}</div>
+        </div>
+        ${t.observacao ? `<div class="muted">${escapeHtml(t.observacao)}</div>` : ""}
+      </div>`;
+    }).join("");
+  }
+  return html;
+}
+
+window.onAbrirCaixa = async () => {
+  const inp = document.getElementById("caixa-abertura");
+  const valor = parseFloat(String(inp.value).replace(",","."));
+  if(isNaN(valor) || valor < 0){ toast("Informe um valor de abertura válido"); return; }
+  const { error } = await sb.rpc("admin_abrir_caixa", { p_token: sessaoAtual.token, p_valor_abertura: valor });
+  if(error){ toast(error.message || "Erro ao abrir caixa"); console.error(error); return; }
+  toast("Caixa aberto");
+  await loadAll();
+};
+
+window.onFecharCaixa = async () => {
+  const contadoInp = document.getElementById("caixa-contado");
+  const obsInp = document.getElementById("caixa-obs");
+  const contado = parseFloat(String(contadoInp.value).replace(",","."));
+  if(isNaN(contado) || contado < 0){ toast("Informe o valor contado"); return; }
+  const { data, error } = await sb.rpc("admin_fechar_caixa", {
+    p_token: sessaoAtual.token, p_valor_contado: contado, p_observacao: obsInp.value.trim() || null
+  });
+  if(error){ toast(error.message || "Erro ao fechar caixa"); console.error(error); return; }
+  const r = data && data[0];
+  toast(r ? `Caixa fechado. Diferença: ${fmt(r.diferenca)}` : "Caixa fechado");
+  await loadAll();
+};
+
+function renderExcluidasSection(){
+  const excluidas = comandas.filter(c => c.status === "excluida")
+    .sort((a,b) => new Date(b.excluida_em) - new Date(a.excluida_em));
+  if(excluidas.length === 0) return `<div class="empty">Nenhuma comanda excluída.</div>`;
+  return excluidas.map(c => `
+    <div class="card paper-card">
+      <div class="row">
+        <div><strong>${escapeHtml(c.nome)}</strong>
+          <div class="muted">Excluída por ${escapeHtml(c.excluida_por||'-')} em ${fmtDate(c.excluida_em)}</div>
+        </div>
+        <div class="total">${fmt(c.total)}</div>
+      </div>
+      <div class="muted" style="margin-top:6px;"><strong>Motivo:</strong> ${escapeHtml(c.motivo_exclusao||'-')}</div>
+    </div>
+  `).join("");
+}
+
+function renderVendasSection(){
+  return `
+    <div class="card">
+      <strong>Faturamento — últimos 30 dias</strong>
+      <canvas id="grafico-faturamento" height="180"></canvas>
+    </div>
+    <div class="card">
+      <strong>Produtos mais vendidos — últimos 30 dias</strong>
+      <canvas id="grafico-ranking" height="180"></canvas>
+    </div>
+    <div id="reposicao-area"></div>
+  `;
+}
+
+function calcularVendas30dias(){
+  const inicio = new Date(Date.now() - 30 * 86400000);
+
+  const pagas = comandas.filter(c => c.status === "paga" && c.fechada_em && new Date(c.fechada_em) >= inicio);
+  const porDia = {};
+  pagas.forEach(c => {
+    const dia = new Date(c.fechada_em).toLocaleDateString("pt-BR");
+    porDia[dia] = (porDia[dia] || 0) + c.total;
+  });
+
+  const contagemProduto = {};
+  comandas.forEach(c => {
+    c.itens.forEach(i => {
+      if(!i.produto_id) return;
+      if(new Date(i.criado_em) < inicio) return;
+      contagemProduto[i.produto_id] = (contagemProduto[i.produto_id] || 0) + 1;
+    });
+  });
+
+  return { porDia, contagemProduto };
+}
+
+let chartFaturamento = null;
+let chartRanking = null;
+
+function desenharGraficos(){
+  const { porDia, contagemProduto } = calcularVendas30dias();
+
+  const dias = Object.keys(porDia).sort((a,b) => {
+    const [da,ma,ya] = a.split("/"); const [db,mb,yb] = b.split("/");
+    return new Date(ya,ma-1,da) - new Date(yb,mb-1,db);
+  });
+  const valores = dias.map(d => porDia[d]);
+
+  const ctxF = document.getElementById("grafico-faturamento");
+  if(chartFaturamento) chartFaturamento.destroy();
+  if(ctxF){
+    chartFaturamento = new Chart(ctxF, {
+      type: "line",
+      data: { labels: dias, datasets: [{ label: "R$", data: valores, borderColor: "#3f8a4c", backgroundColor: "rgba(63,138,76,.15)", fill: true, tension: .25 }] },
+      options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+
+  const ranking = Object.entries(contagemProduto)
+    .map(([produtoId, qtd]) => ({ produto: produtos.find(p => p.id === produtoId), qtd }))
+    .filter(r => r.produto)
+    .sort((a,b) => b.qtd - a.qtd)
+    .slice(0, 10);
+
+  const ctxR = document.getElementById("grafico-ranking");
+  if(chartRanking) chartRanking.destroy();
+  if(ctxR){
+    chartRanking = new Chart(ctxR, {
+      type: "bar",
+      data: { labels: ranking.map(r => r.produto.nome), datasets: [{ label: "Unidades", data: ranking.map(r => r.qtd), backgroundColor: "#b9791f" }] },
+      options: { indexAxis: "y", plugins: { legend: { display: false } } }
+    });
+  }
+
+  const previsoes = produtos.map(p => {
+    const qtdVendida = contagemProduto[p.id] || 0;
+    const mediaDiaria = qtdVendida / 30;
+    const diasRestantes = mediaDiaria > 0 ? p.estoque / mediaDiaria : Infinity;
+    return { produto: p, mediaDiaria, diasRestantes };
+  }).filter(p => p.mediaDiaria > 0 && p.diasRestantes <= 3)
+    .sort((a,b) => a.diasRestantes - b.diasRestantes);
+
+  const area = document.getElementById("reposicao-area");
+  if(!area) return;
+  if(previsoes.length === 0){
+    area.innerHTML = `<div class="empty">Nenhum produto com previsão de acabar nos próximos 3 dias.</div>`;
+  } else {
+    area.innerHTML = `<div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;">⚠️ Previsão de reposição</div>` +
+      previsoes.map(p => `
+        <div class="card paper-card">
+          <div class="row">
+            <div><strong>${escapeHtml(p.produto.nome)}</strong>
+              <div class="muted">vende ~${p.mediaDiaria.toFixed(1)}/dia · estoque atual: ${p.produto.estoque}</div>
+            </div>
+            <span class="badge badge-fiado">ACABA EM ~${Math.max(0, Math.floor(p.diasRestantes))} DIA(S)</span>
+          </div>
+        </div>
+      `).join("");
+  }
 }
 
 function diasDesde(data){
@@ -594,8 +807,8 @@ function renderClientes(){
            </span>`
         : "";
       const mensagem = totalDevendo > 0
-        ? `Oi ${cli.nome}! Aqui é do Arena Beach 🍺 Passando pra lembrar que está pendente ${fmt(totalDevendo)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`
-        : `Oi ${cli.nome}! Aqui é do Arena Beach 🍺`;
+        ? `Oi ${cli.nome}! Aqui é do Arena Araçá 🍺 Passando pra lembrar que está pendente ${fmt(totalDevendo)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`
+        : `Oi ${cli.nome}! Aqui é do Arena Araçá 🍺`;
       return `
       <div class="card paper-card">
         <div class="row">
@@ -613,12 +826,22 @@ function renderClientes(){
   app.innerHTML = html;
 }
 
-function produtoCardHtml(p){
+function produtoCardHtml(p, isAdmin){
   const baixo = p.estoque <= 0
     ? `<span class="badge badge-fiado">ESGOTADO</span>`
     : p.estoque <= p.estoque_minimo
       ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
       : "";
+  if(!isAdmin){
+    return `
+    <div class="card paper-card">
+      <div class="row">
+        <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
+          <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
+        </div>
+      </div>
+    </div>`;
+  }
   return `
   <div class="card paper-card">
     <div class="row">
@@ -639,7 +862,10 @@ function produtoCardHtml(p){
 }
 
 function renderEstoque(){
-  let html = `
+  const isAdmin = sessaoAtual.role === "admin";
+  let html = "";
+  if(isAdmin){
+    html += `
     <div class="card">
       <div class="form-row">
         <input id="prod-nome" placeholder="Produto (ex: Cerveja)" />
@@ -662,7 +888,8 @@ function renderEstoque(){
         <div class="help-box">Formato por linha: <code>nome; preço; estoque; mínimo</code> (mínimo opcional). Uma linha <code>## Categoria</code> define a categoria dos produtos seguintes (padrão "Outros" se não informar). Produtos com nome já cadastrado são ignorados.</div>
       </div>
     </div>
-  `;
+    `;
+  }
   if(produtos.length === 0){
     html += `<div class="empty">Nenhum produto cadastrado ainda.</div>`;
   } else {
@@ -674,7 +901,7 @@ function renderEstoque(){
     const categorias = Object.keys(grupos).sort((a,b) => a.localeCompare(b, 'pt-BR'));
     html += categorias.map(cat => `
       <div class="muted" style="margin:16px 0 6px;font-weight:700;text-transform:uppercase;font-size:12px;letter-spacing:.5px;">${escapeHtml(cat)}</div>
-      ${grupos[cat].map(produtoCardHtml).join("")}
+      ${grupos[cat].map(p => produtoCardHtml(p, isAdmin)).join("")}
     `).join("");
   }
   app.innerHTML = html;
@@ -901,7 +1128,7 @@ function renderDetailSheet(){
           <span class="total">${fmt(c.total)}</span>
         </div>
         ${actionsHtml}
-        <button class="btn btn-danger" style="width:100%;margin-top:8px;" onclick="excluirComanda('${c.id}')">Excluir comanda</button>
+        ${sessaoAtual.role === "admin" ? `<button class="btn btn-danger" style="width:100%;margin-top:8px;" onclick="excluirComanda('${c.id}')">Excluir comanda</button>` : ""}
       </div>
     </div>
   `;
@@ -966,22 +1193,40 @@ window.onCadastrarCliente = () => {
   nome.value = ""; whatsapp.value = "";
 };
 
-document.querySelectorAll("nav button").forEach(btn => {
-  btn.addEventListener("click", () => {
-    tab = btn.dataset.tab;
-    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    render();
-  });
-});
-
 // ---------- Autenticação ----------
 const SESSION_KEY = "bar_sessao";
 let realtimeStarted = false;
 
+function renderNav(){
+  const navEl = document.getElementById("nav-tabs");
+  const abas = [
+    { id: "abertas", label: "Abertas" },
+    { id: "fiado", label: "Fiado" },
+    { id: "clientes", label: "Clientes" },
+    { id: "estoque", label: "Estoque" },
+  ];
+  if(sessaoAtual.role === "admin"){
+    abas.push({ id: "historico", label: "Histórico" });
+    abas.push({ id: "admin", label: "Admin" });
+  }
+  tab = "abertas";
+  navEl.innerHTML = abas.map((a,i) => `<button data-tab="${a.id}" class="${i===0?'active':''}">${a.label}</button>`).join("");
+  navEl.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      tab = btn.dataset.tab;
+      navEl.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      render();
+    });
+  });
+  const badge = document.getElementById("role-badge");
+  if(badge) badge.textContent = sessaoAtual.usuario ? `${sessaoAtual.usuario} (${sessaoAtual.role})` : "";
+}
+
 function startApp(){
   document.getElementById("login-screen").style.display = "none";
   document.getElementById("app-shell").style.display = "block";
+  renderNav();
   if(!realtimeStarted){
     realtimeStarted = true;
     sb.channel("comandas-sync")
@@ -1012,7 +1257,9 @@ window.onLogin = async () => {
     return;
   }
   if(data && data.length){
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ token: data[0].token, expira_em: data[0].expira_em }));
+    const { token, expira_em, role } = data[0];
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ token, expira_em, usuario, role }));
+    sessaoAtual = { token, role, usuario };
     document.getElementById("login-senha").value = "";
     startApp();
   } else {
@@ -1023,6 +1270,7 @@ window.onLogin = async () => {
 window.onLogout = async () => {
   const sessao = getSessao();
   localStorage.removeItem(SESSION_KEY);
+  sessaoAtual = null;
   if(sessao){ await sb.rpc("encerrar_sessao", { p_token: sessao.token }); }
   showLogin();
 };
@@ -1045,11 +1293,13 @@ async function initAuth(){
   const sessao = getSessao();
   if(!sessao || !sessao.token){ showLogin(); return; }
   const { data, error } = await sb.rpc("validar_sessao", { p_token: sessao.token });
-  if(error || data !== true){
+  const resultado = data && data[0];
+  if(error || !resultado || resultado.valido !== true){
     localStorage.removeItem(SESSION_KEY);
     showLogin();
     return;
   }
+  sessaoAtual = { token: sessao.token, role: resultado.role, usuario: sessao.usuario };
   startApp();
 }
 
