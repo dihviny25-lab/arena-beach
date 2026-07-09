@@ -795,8 +795,22 @@ function renderExcluidasSection(){
   `).join("");
 }
 
+const MESES_ABREV = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+
+function labelMes(chaveAnoMes){
+  const [ano, mes] = chaveAnoMes.split("-");
+  return `${MESES_ABREV[parseInt(mes,10)-1]}/${ano.slice(2)}`;
+}
+
 function renderVendasSection(){
   return `
+    <div class="card">
+      <strong>Faturamento por mês</strong>
+      <div id="comparativo-mensal" class="muted" style="font-size:12px;margin-top:2px;"></div>
+      <div style="position:relative;height:220px;margin-top:8px;">
+        <canvas id="grafico-mensal"></canvas>
+      </div>
+    </div>
     <div class="card">
       <strong>Faturamento — últimos 30 dias</strong>
       <div style="position:relative;height:220px;margin-top:8px;">
@@ -845,11 +859,56 @@ function calcularVendas30dias(){
   return { porDia, contagemProduto, porHora };
 }
 
+function calcularFaturamentoMensal(){
+  const porMes = {};
+  comandas.forEach(c => {
+    if(c.status !== "paga" || !c.fechada_em) return;
+    const d = new Date(c.fechada_em);
+    const chave = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+    porMes[chave] = (porMes[chave] || 0) + c.total;
+  });
+  return porMes;
+}
+
 let chartFaturamento = null;
 let chartRanking = null;
 let chartHorario = null;
+let chartMensal = null;
 
 function desenharGraficos(){
+  const porMes = calcularFaturamentoMensal();
+  const mesesOrdenados = Object.keys(porMes).sort();
+  const ultimos12 = mesesOrdenados.slice(-12);
+
+  const ctxM = document.getElementById("grafico-mensal");
+  if(chartMensal) chartMensal.destroy();
+  if(ctxM){
+    chartMensal = new Chart(ctxM, {
+      type: "bar",
+      data: { labels: ultimos12.map(labelMes), datasets: [{ label: "R$", data: ultimos12.map(m => porMes[m]), backgroundColor: "#3f8a4c" }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+  }
+
+  const compEl = document.getElementById("comparativo-mensal");
+  if(compEl){
+    if(ultimos12.length < 2){
+      compEl.textContent = "Ainda não há um mês fechado anterior pra comparar.";
+    } else {
+      const chaveAtual = ultimos12[ultimos12.length - 1];
+      const chaveAnterior = ultimos12[ultimos12.length - 2];
+      const atual = porMes[chaveAtual];
+      const anterior = porMes[chaveAnterior];
+      if(anterior > 0){
+        const variacao = ((atual - anterior) / anterior) * 100;
+        const subiu = variacao >= 0;
+        compEl.innerHTML = `${labelMes(chaveAtual)}: <strong>${fmt(atual)}</strong> · ${labelMes(chaveAnterior)}: <strong>${fmt(anterior)}</strong> · <span style="color:${subiu?'var(--accent)':'var(--danger)'}">${subiu?'▲':'▼'} ${Math.abs(variacao).toFixed(0)}%</span>`;
+      } else {
+        compEl.innerHTML = `${labelMes(chaveAtual)}: <strong>${fmt(atual)}</strong>`;
+      }
+    }
+  }
+
   const { porDia, contagemProduto, porHora } = calcularVendas30dias();
 
   const dias = Object.keys(porDia).sort((a,b) => {
