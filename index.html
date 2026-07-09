@@ -132,6 +132,7 @@ let openComandaId = null; // which detail sheet is open
 let sessaoAtual = null; // { token, role, usuario }
 let adminSubTab = "resumo";
 let editandoProdutoId = null;
+let periodoComparacao = 7;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -579,6 +580,7 @@ function render(){
 
 // ---------- Admin: Caixa / Vendas / Excluídas ----------
 window.setAdminSubTab = (s) => { adminSubTab = s; render(); };
+window.onMudarPeriodoComparacao = (v) => { periodoComparacao = parseInt(v, 10); render(); };
 
 function renderAdmin(){
   let html = `
@@ -613,16 +615,16 @@ function renderResumoSection(){
   const totalFiado = fiados.reduce((s,c) => s + c.total, 0);
 
   const agora = new Date();
-  const fim7 = new Date(agora.getTime() + 1000);
-  const inicio7 = new Date(agora.getTime() - 7 * 86400000);
-  const inicio14 = new Date(agora.getTime() - 14 * 86400000);
-  const faturado7 = somaFaturamentoPeriodo(inicio7, fim7);
-  const faturado7Anterior = somaFaturamentoPeriodo(inicio14, inicio7);
-  let deltaHtml = `<div class="muted" style="font-size:11px;margin-top:2px;">sem comparação (sem vendas na semana anterior)</div>`;
-  if(faturado7Anterior > 0){
-    const variacao = ((faturado7 - faturado7Anterior) / faturado7Anterior) * 100;
+  const fimAtual = new Date(agora.getTime() + 1000);
+  const inicioAtual = new Date(agora.getTime() - periodoComparacao * 86400000);
+  const inicioAnterior = new Date(agora.getTime() - (periodoComparacao * 2) * 86400000);
+  const faturadoAtual = somaFaturamentoPeriodo(inicioAtual, fimAtual);
+  const faturadoAnterior = somaFaturamentoPeriodo(inicioAnterior, inicioAtual);
+  let deltaHtml = `<div class="muted" style="font-size:11px;margin-top:2px;">sem comparação (sem vendas no período anterior)</div>`;
+  if(faturadoAnterior > 0){
+    const variacao = ((faturadoAtual - faturadoAnterior) / faturadoAnterior) * 100;
     const subiu = variacao >= 0;
-    deltaHtml = `<div style="font-size:11px;margin-top:2px;color:${subiu ? 'var(--accent)' : 'var(--danger)'};">${subiu ? '▲' : '▼'} ${Math.abs(variacao).toFixed(0)}% vs semana anterior</div>`;
+    deltaHtml = `<div style="font-size:11px;margin-top:2px;color:${subiu ? 'var(--accent)' : 'var(--danger)'};">${subiu ? '▲' : '▼'} ${Math.abs(variacao).toFixed(0)}% vs período anterior</div>`;
   }
 
   const cards = [
@@ -635,8 +637,15 @@ function renderResumoSection(){
 
   let html = `
     <div class="card" style="text-align:center;margin-bottom:10px;">
-      <div class="muted" style="font-size:11px;text-transform:uppercase;">Faturado (últimos 7 dias)</div>
-      <div class="total" style="margin-top:4px;font-size:22px;">${fmt(faturado7)}</div>
+      <div class="row" style="justify-content:center;gap:8px;">
+        <div class="muted" style="font-size:11px;text-transform:uppercase;">Faturado (últimos <span id="periodo-label">${periodoComparacao}</span> dias)</div>
+        <select id="periodo-select" style="width:auto;padding:2px 6px;font-size:12px;" onchange="onMudarPeriodoComparacao(this.value)">
+          <option value="7" ${periodoComparacao===7?'selected':''}>7 dias</option>
+          <option value="14" ${periodoComparacao===14?'selected':''}>14 dias</option>
+          <option value="30" ${periodoComparacao===30?'selected':''}>30 dias</option>
+        </select>
+      </div>
+      <div class="total" style="margin-top:4px;font-size:22px;">${fmt(faturadoAtual)}</div>
       ${deltaHtml}
     </div>
   `;
@@ -800,6 +809,13 @@ function renderVendasSection(){
         <canvas id="grafico-ranking"></canvas>
       </div>
     </div>
+    <div class="card">
+      <strong>Horário de pico — últimos 30 dias</strong>
+      <div class="muted" style="font-size:12px;">Quantidade de itens lançados por hora do dia (automático, com base nos horários reais de lançamento).</div>
+      <div style="position:relative;height:220px;margin-top:8px;">
+        <canvas id="grafico-horario"></canvas>
+      </div>
+    </div>
     <div id="reposicao-area"></div>
   `;
 }
@@ -815,22 +831,26 @@ function calcularVendas30dias(){
   });
 
   const contagemProduto = {};
+  const porHora = Array(24).fill(0);
   comandas.forEach(c => {
     c.itens.forEach(i => {
+      const dataItem = new Date(i.criado_em);
+      if(dataItem < inicio) return;
+      porHora[dataItem.getHours()]++;
       if(!i.produto_id) return;
-      if(new Date(i.criado_em) < inicio) return;
       contagemProduto[i.produto_id] = (contagemProduto[i.produto_id] || 0) + 1;
     });
   });
 
-  return { porDia, contagemProduto };
+  return { porDia, contagemProduto, porHora };
 }
 
 let chartFaturamento = null;
 let chartRanking = null;
+let chartHorario = null;
 
 function desenharGraficos(){
-  const { porDia, contagemProduto } = calcularVendas30dias();
+  const { porDia, contagemProduto, porHora } = calcularVendas30dias();
 
   const dias = Object.keys(porDia).sort((a,b) => {
     const [da,ma,ya] = a.split("/"); const [db,mb,yb] = b.split("/");
@@ -861,6 +881,16 @@ function desenharGraficos(){
       type: "bar",
       data: { labels: ranking.map(r => r.produto.nome), datasets: [{ label: "Unidades", data: ranking.map(r => r.qtd), backgroundColor: "#b9791f" }] },
       options: { responsive: true, maintainAspectRatio: false, indexAxis: "y", plugins: { legend: { display: false } } }
+    });
+  }
+
+  const ctxH = document.getElementById("grafico-horario");
+  if(chartHorario) chartHorario.destroy();
+  if(ctxH){
+    chartHorario = new Chart(ctxH, {
+      type: "bar",
+      data: { labels: porHora.map((_,h) => `${h}h`), datasets: [{ label: "Itens lançados", data: porHora, backgroundColor: "#3f8a4c" }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
     });
   }
 
