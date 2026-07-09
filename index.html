@@ -597,6 +597,12 @@ function renderAdmin(){
   if(adminSubTab === "vendas") desenharGraficos();
 }
 
+function somaFaturamentoPeriodo(inicio, fim){
+  return comandas
+    .filter(c => c.status === "paga" && c.fechada_em && new Date(c.fechada_em) >= inicio && new Date(c.fechada_em) < fim)
+    .reduce((s,c) => s + c.total, 0);
+}
+
 function renderResumoSection(){
   const abertas = comandas.filter(c => c.status === "aberta");
   const fiados = comandas.filter(c => c.status === "fiado");
@@ -606,6 +612,19 @@ function renderResumoSection(){
   const ticketMedio = pagas30.length ? faturado30 / pagas30.length : 0;
   const totalFiado = fiados.reduce((s,c) => s + c.total, 0);
 
+  const agora = new Date();
+  const fim7 = new Date(agora.getTime() + 1000);
+  const inicio7 = new Date(agora.getTime() - 7 * 86400000);
+  const inicio14 = new Date(agora.getTime() - 14 * 86400000);
+  const faturado7 = somaFaturamentoPeriodo(inicio7, fim7);
+  const faturado7Anterior = somaFaturamentoPeriodo(inicio14, inicio7);
+  let deltaHtml = `<div class="muted" style="font-size:11px;margin-top:2px;">sem comparação (sem vendas na semana anterior)</div>`;
+  if(faturado7Anterior > 0){
+    const variacao = ((faturado7 - faturado7Anterior) / faturado7Anterior) * 100;
+    const subiu = variacao >= 0;
+    deltaHtml = `<div style="font-size:11px;margin-top:2px;color:${subiu ? 'var(--accent)' : 'var(--danger)'};">${subiu ? '▲' : '▼'} ${Math.abs(variacao).toFixed(0)}% vs semana anterior</div>`;
+  }
+
   const cards = [
     { label: "Comandas abertas", valor: abertas.length },
     { label: "Fechadas (30d)", valor: pagas30.length },
@@ -614,7 +633,15 @@ function renderResumoSection(){
     { label: "Em fiado agora", valor: `${fiados.length} · ${fmt(totalFiado)}` },
   ];
 
-  let html = `<div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:4px;">` +
+  let html = `
+    <div class="card" style="text-align:center;margin-bottom:10px;">
+      <div class="muted" style="font-size:11px;text-transform:uppercase;">Faturado (últimos 7 dias)</div>
+      <div class="total" style="margin-top:4px;font-size:22px;">${fmt(faturado7)}</div>
+      ${deltaHtml}
+    </div>
+  `;
+
+  html += `<div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:4px;">` +
     cards.map(c => `
       <div class="card" style="flex:1;min-width:130px;text-align:center;">
         <div class="muted" style="font-size:11px;text-transform:uppercase;">${c.label}</div>
