@@ -1,0 +1,12 @@
+{
+  "name": "arena-araca-tests",
+  "private": true,
+  "description": "Suíte de testes de regressão do app Comandas do Bar (não faz parte do site publicado).",
+  "scripts": {
+    "test": "node tests/regressao.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}

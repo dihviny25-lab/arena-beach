@@ -1,0 +1,5 @@
+{
+  "buildCommand": "echo 'site estático, sem build'",
+  "installCommand": "echo 'sem dependências de produção'",
+  "outputDirectory": "."
+}
