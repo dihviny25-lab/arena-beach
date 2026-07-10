@@ -31,12 +31,21 @@
     background-image:
       url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
   }
-  header{position:sticky;top:0;background:var(--bg);z-index:10;padding:14px 16px 0;border-bottom:1px dashed var(--border);}
-  h1{font-family:"Kalam",cursive;font-size:22px;margin:0 0 12px;letter-spacing:.3px;}
-  nav{display:flex;gap:6px;}
-  nav button{flex:1;padding:10px 3px;border:none;background:transparent;color:var(--muted);font-family:inherit;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:8px 8px 0 0;cursor:pointer;}
-  nav button.active{color:var(--text);background:var(--card);box-shadow:0 -1px 0 var(--border) inset;}
-  main{padding:16px;max-width:640px;margin:0 auto;padding-bottom:80px;}
+  header{position:sticky;top:0;background:var(--bg);z-index:10;padding:14px 16px;border-bottom:1px dashed var(--border);}
+  h1{font-family:"Kalam",cursive;font-size:22px;margin:0;letter-spacing:.3px;}
+  .hamburger-btn{display:none;background:none;border:none;color:var(--text);font-size:22px;cursor:pointer;padding:2px 6px 2px 0;line-height:1;}
+  .app-body{display:flex;max-width:960px;margin:0 auto;align-items:flex-start;}
+  #nav-tabs{width:170px;flex-shrink:0;padding:16px 8px;position:sticky;top:57px;}
+  #nav-tabs button{display:block;width:100%;text-align:left;padding:11px 12px;margin-bottom:4px;border:none;background:transparent;color:var(--muted);font-family:inherit;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;border-radius:8px;cursor:pointer;}
+  #nav-tabs button.active{color:var(--text);background:var(--card);box-shadow:0 1px 0 var(--border) inset;}
+  #sidebar-overlay{display:none;}
+  main{padding:16px;max-width:640px;flex:1;min-width:0;padding-bottom:80px;}
+  @media (max-width: 768px){
+    .hamburger-btn{display:inline-block;}
+    #nav-tabs{position:fixed;top:0;left:-240px;height:100vh;width:220px;z-index:60;background:var(--bg);border-right:1px dashed var(--border);transition:left .25s;box-shadow:2px 0 14px rgba(30,22,10,.25);overflow-y:auto;padding-top:60px;}
+    #nav-tabs.open{left:0;}
+    #sidebar-overlay.open{display:block;position:fixed;inset:0;background:rgba(30,22,10,.45);z-index:55;}
+  }
   .card{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px;box-shadow:0 2px 5px rgba(60,45,20,.12);}
   .paper-card{transition:transform .15s;}
   .paper-card:nth-child(odd){transform:rotate(-.6deg);border-radius:3px 10px 4px 9px;}
@@ -104,17 +113,23 @@
 <div id="app-shell" style="display:none;">
 <header>
   <div class="row">
-    <h1>🍺 Comandas do Bar</h1>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <button class="hamburger-btn" onclick="toggleSidebar()">☰</button>
+      <h1>🍺 Comandas do Bar</h1>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;">
       <span class="muted" id="role-badge" style="font-size:12px;"></span>
       <a href="/ajuda.html" target="_blank" rel="noopener" class="logout-btn" style="text-decoration:none;">❓ Ajuda</a>
       <button class="logout-btn" onclick="onLogout()">Sair</button>
     </div>
   </div>
-  <nav id="nav-tabs"></nav>
 </header>
 
-<main id="app"></main>
+<div class="app-body">
+  <div id="sidebar-overlay" onclick="closeSidebar()"></div>
+  <nav id="nav-tabs"></nav>
+  <main id="app"></main>
+</div>
 </div>
 <div id="toast" class="toast"></div>
 
@@ -1438,6 +1453,15 @@ window.onCadastrarCliente = () => {
 const SESSION_KEY = "bar_sessao";
 let realtimeStarted = false;
 
+window.toggleSidebar = () => {
+  document.getElementById("nav-tabs").classList.toggle("open");
+  document.getElementById("sidebar-overlay").classList.toggle("open");
+};
+window.closeSidebar = () => {
+  document.getElementById("nav-tabs").classList.remove("open");
+  document.getElementById("sidebar-overlay").classList.remove("open");
+};
+
 function renderNav(){
   const navEl = document.getElementById("nav-tabs");
   const abas = [
@@ -1458,6 +1482,7 @@ function renderNav(){
       navEl.querySelectorAll("button").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
       render();
+      closeSidebar();
     });
   });
   const badge = document.getElementById("role-badge");
