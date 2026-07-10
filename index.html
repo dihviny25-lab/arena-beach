@@ -148,6 +148,7 @@ let sessaoAtual = null; // { token, role, usuario }
 let adminSubTab = "resumo";
 let editandoProdutoId = null;
 let periodoComparacao = 7;
+let clienteSelecionadoAbrirId = null;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -168,6 +169,13 @@ function fmtDate(d){
 }
 
 async function loadAll(){
+  // Preserva o que o usuário estiver digitando: uma atualização em tempo real
+  // (de qualquer sessão) não pode apagar o campo no meio da digitação.
+  const ativo = document.activeElement;
+  const preservar = (ativo && ativo.tagName === "INPUT" && ativo.id)
+    ? { id: ativo.id, valor: ativo.value, selStart: ativo.selectionStart, selEnd: ativo.selectionEnd }
+    : null;
+
   const { data: cmds, error: e1 } = await sb.from("comandas").select("*").order("criada_em",{ascending:false});
   if(e1){ console.error(e1); toast("Erro ao carregar comandas"); return; }
   const { data: itens, error: e2 } = await sb.from("itens").select("*").order("criado_em",{ascending:true});
@@ -190,21 +198,59 @@ async function loadAll(){
   }
 
   render();
+
+  if(preservar){
+    const el = document.getElementById(preservar.id);
+    if(el){
+      el.value = preservar.valor;
+      el.focus();
+      if(el.setSelectionRange && preservar.selStart != null){
+        try{ el.setSelectionRange(preservar.selStart, preservar.selEnd); }catch{}
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
 }
 
-async function abrirComanda(nome, celular){
+async function abrirComanda(nome, celular, clienteIdSelecionado){
   nome = nome.trim();
   if(!nome) return;
   celular = (celular || "").trim();
 
-  let clienteId = null;
-  if(celular){
+  let clienteId = clienteIdSelecionado || null;
+  if(!clienteId && celular){
     const { data: cli, error: e2 } = await sb.from("clientes")
       .upsert({ nome, celular }, { onConflict: "celular" })
       .select("id")
       .single();
     if(e2){ console.error(e2); }
     else { clienteId = cli.id; }
+  }
+
+  // Cliente já tem comanda aberta ou fiado em aberto? Reaproveita em vez de duplicar
+  // (assim o fiado acumula na mesma comanda em vez de espalhar em várias)
+  if(clienteId){
+    const { data: existentes, error: eBusca } = await sb.from("comandas")
+      .select("id, status")
+      .eq("cliente_id", clienteId)
+      .in("status", ["aberta", "fiado"])
+      .order("criada_em", { ascending: false })
+      .limit(1);
+    if(!eBusca && existentes && existentes.length){
+      const existente = existentes[0];
+      if(existente.status === "fiado"){
+        const { error: eReabrir } = await sb.from("comandas").update({
+          status: "aberta", forma_pagamento: null, fechada_em: null
+        }).eq("id", existente.id);
+        if(eReabrir){ toast("Erro ao continuar comanda"); console.error(eReabrir); return; }
+        toast("Cliente já tinha fiado em aberto — continuando na mesma comanda");
+      } else {
+        toast("Cliente já tem uma comanda aberta — abrindo ela");
+      }
+      openComandaId = existente.id;
+      await loadAll();
+      return;
+    }
   }
 
   const { error } = await sb.from("comandas").insert({ nome, status: "aberta", cliente_id: clienteId });
@@ -1158,10 +1204,11 @@ function renderAbertas(){
   let html = `
     <div class="card">
       <div class="form-row">
-        <input id="novo-nome" placeholder="Nome do cliente" />
+        <input id="novo-nome" placeholder="Nome do cliente (busca automática)" autocomplete="off" />
         <input id="novo-celular" placeholder="Celular (opc.)" inputmode="tel" style="max-width:130px;" />
         <button class="btn btn-accent" onclick="onAbrirComanda()">Abrir</button>
       </div>
+      <div id="clientes-sugestoes"></div>
     </div>
   `;
   if(abertas.length === 0){
@@ -1181,7 +1228,24 @@ function renderAbertas(){
   app.innerHTML = html;
   const inp = document.getElementById("novo-nome");
   const celInp = document.getElementById("novo-celular");
-  if(inp) inp.addEventListener("keydown", e => { if(e.key === "Enter") celInp.focus(); });
+  const sugg = document.getElementById("clientes-sugestoes");
+  if(inp){
+    inp.addEventListener("keydown", e => { if(e.key === "Enter") celInp.focus(); });
+    inp.addEventListener("input", () => {
+      clienteSelecionadoAbrirId = null;
+      const termo = inp.value.trim().toLowerCase();
+      if(!termo){ sugg.innerHTML = ""; return; }
+      const encontrados = clientes.filter(c => c.nome.toLowerCase().includes(termo)).slice(0, 5);
+      sugg.innerHTML = encontrados.map(c => {
+        const fiadoCliente = comandas.find(cd => cd.cliente_id === c.id && cd.status === "fiado");
+        return `
+        <div class="item-row" style="cursor:pointer;" onclick="onSelecionarClienteAbrir('${c.id}')">
+          <span>${escapeHtml(c.nome)} <span class="muted">${escapeHtml(c.celular)}</span></span>
+          ${fiadoCliente ? `<span class="badge badge-fiado">deve ${fmt(fiadoCliente.total)}</span>` : ""}
+        </div>`;
+      }).join("");
+    });
+  }
   if(celInp) celInp.addEventListener("keydown", e => { if(e.key === "Enter") onAbrirComanda(); });
 }
 
@@ -1394,8 +1458,19 @@ function escapeHtml(s){
 window.onAbrirComanda = () => {
   const inp = document.getElementById("novo-nome");
   const cel = document.getElementById("novo-celular");
-  abrirComanda(inp.value, cel.value);
+  abrirComanda(inp.value, cel.value, clienteSelecionadoAbrirId);
   inp.value = ""; cel.value = "";
+  clienteSelecionadoAbrirId = null;
+  const sugg = document.getElementById("clientes-sugestoes");
+  if(sugg) sugg.innerHTML = "";
+};
+window.onSelecionarClienteAbrir = (clienteId) => {
+  const cli = clientes.find(c => c.id === clienteId);
+  if(!cli) return;
+  document.getElementById("novo-nome").value = cli.nome;
+  document.getElementById("novo-celular").value = cli.celular;
+  clienteSelecionadoAbrirId = cli.id;
+  document.getElementById("clientes-sugestoes").innerHTML = "";
 };
 window.onAddItem = (comandaId) => {
   const desc = document.getElementById("item-desc");
