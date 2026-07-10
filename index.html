@@ -217,49 +217,23 @@ async function abrirComanda(nome, celular, clienteIdSelecionado){
   if(!nome) return;
   celular = (celular || "").trim();
 
-  let clienteId = clienteIdSelecionado || null;
-  if(!clienteId && celular){
-    const { data: cli, error: e2 } = await sb.from("clientes")
-      .upsert({ nome, celular }, { onConflict: "celular" })
-      .select("id")
-      .single();
-    if(e2){ console.error(e2); }
-    else { clienteId = cli.id; }
-  }
-
-  // Cliente já tem comanda aberta ou fiado em aberto? Reaproveita em vez de duplicar
-  // (assim o fiado acumula na mesma comanda em vez de espalhar em várias)
-  if(clienteId){
-    const { data: existentes, error: eBusca } = await sb.from("comandas")
-      .select("id, status")
-      .eq("cliente_id", clienteId)
-      .in("status", ["aberta", "fiado"])
-      .order("criada_em", { ascending: false })
-      .limit(1);
-    if(!eBusca && existentes && existentes.length){
-      const existente = existentes[0];
-      if(existente.status === "fiado"){
-        const { error: eReabrir } = await sb.from("comandas").update({
-          status: "aberta", forma_pagamento: null, fechada_em: null
-        }).eq("id", existente.id);
-        if(eReabrir){ toast("Erro ao continuar comanda"); console.error(eReabrir); return; }
-        toast("Cliente já tinha fiado em aberto — continuando na mesma comanda");
-      } else {
-        toast("Cliente já tem uma comanda aberta — abrindo ela");
-      }
-      openComandaId = existente.id;
-      await loadAll();
-      return;
-    }
-  }
-
-  const { error } = await sb.from("comandas").insert({ nome, status: "aberta", cliente_id: clienteId });
+  // Função atômica no banco: evita duas comandas duplicadas se dois
+  // funcionários abrirem pro mesmo cliente ao mesmo tempo.
+  const { data, error } = await sb.rpc("abrir_ou_continuar_comanda", {
+    p_nome: nome, p_celular: celular || null, p_cliente_id: clienteIdSelecionado || null
+  });
   if(error){
     if(error.code === "23505"){ toast("Já existe uma comanda aberta com esse nome"); }
     else { toast("Erro ao abrir comanda"); console.error(error); }
     return;
   }
-  toast("Comanda aberta");
+  const resultado = data && data[0];
+  if(resultado && resultado.reaproveitada){
+    toast("Cliente já tinha comanda em aberto — continuando nela");
+    openComandaId = resultado.comanda_id;
+  } else {
+    toast("Comanda aberta");
+  }
   await loadAll();
 }
 
