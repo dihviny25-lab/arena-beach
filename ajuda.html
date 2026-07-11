@@ -92,7 +92,7 @@
     <h2>👥 Frente de caixa x Admin</h2>
     <p>O app tem dois tipos de login, com telas diferentes:</p>
     <ul>
-      <li><strong>Frente de caixa:</strong> abre e lança comandas, marca fiado, cadastra/edita clientes. Não vê Estoque com botões de edição (só consulta preço/quantidade), não vê Histórico nem o painel Admin, e não pode excluir comanda.</li>
+      <li><strong>Frente de caixa:</strong> abre e lança comandas, marca fiado, cadastra/edita clientes, registra entrada de mercadoria no Estoque. Não vê a quantidade em estoque nem pode editar/ajustar/excluir produto, não vê Histórico nem o painel Admin, e não pode excluir comanda.</li>
       <li><strong>Admin:</strong> tudo que o caixa faz, mais controle total do Estoque, Histórico, abertura/fechamento de caixa físico, painel de vendas, e exclusão de comanda (com motivo).</li>
     </ul>
     <p>Cada usuário mostra seu nome e papel no canto superior direito do app (ex: "Fulano (admin)").</p>
@@ -102,46 +102,45 @@
   <section id="abertas">
     <h2>🧾 Abrir e lançar comandas — aba "Abertas"</h2>
     <h3>Abrir uma comanda nova</h3>
-    <p>Digite o nome do cliente (e o WhatsApp, se quiser — isso já cadastra o cliente automaticamente) e toque em <strong>Abrir</strong>.</p>
-    <h3>Lançar itens</h3>
-    <p>Toque na comanda pra abrir os detalhes. Lá dentro você tem 3 formas de lançar item:</p>
+    <p>Toque em <strong>"+ Abrir comanda"</strong>. Tudo acontece numa tela só:</p>
     <ul>
-      <li><strong>Produto cadastrado:</strong> aparece uma lista dos produtos do Estoque — toque no <code>+</code> ao lado do item pra lançar 1 unidade (já desconta do estoque automaticamente).</li>
-      <li><strong>Item avulso:</strong> quando não é um produto cadastrado (ex: taxa de serviço). Preencha descrição e valor e toque em <code>+</code>.</li>
-      <li><strong>Vários de uma vez:</strong> toque em "📋 Adicionar vários itens de uma vez" e cole uma lista, uma linha por item — veja formatos em <a href="#voz">Comando de voz</a> mais abaixo, funciona junto.</li>
+      <li><strong>Cliente (obrigatório):</strong> digite o nome — se já tiver cadastro, aparece uma sugestão pra tocar e reaproveitar (puxa nome e WhatsApp automaticamente, e já mostra se ele tem fiado em aberto). Nome e WhatsApp são obrigatórios pra todo mundo, sem exceção.</li>
+      <li><strong>Itens (pelo menos 1):</strong> toque no <code>+</code> ao lado dos produtos do Estoque, ou preencha um item avulso (descrição + valor) pra coisas como Day Use e Aluguel de quadra, que têm preço editável e não mexem no estoque.</li>
     </ul>
+    <p>Só depois de ter cliente completo + pelo menos 1 item é que o botão <strong>Criar comanda</strong> funciona. Se o cliente já tinha uma comanda aberta (ou fiado em aberto), o app reaproveita a mesma em vez de criar outra — evita comanda duplicada.</p>
     <h3>Fechar a comanda</h3>
     <p>Escolha a forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra fechar, ou toque em <strong>"Fechar como Fiado"</strong> se o cliente vai pagar depois.</p>
-    <div class="aviso"><strong>Só admin</strong> pode excluir uma comanda, e precisa digitar o motivo. A comanda não é apagada de verdade — ela fica guardada na aba Admin → Excluídas, com motivo, data e quem excluiu.</div>
+    <div class="aviso"><strong>Só admin</strong> pode excluir uma comanda, e precisa digitar o motivo. A comanda não é apagada de verdade — ela fica guardada na aba Admin → Excluídas, com motivo, data e quem excluiu. Se a comanda excluída tinha produtos com desconto de estoque, o estoque volta automaticamente.</div>
   </section>
 
   <section id="fiado">
     <h2>📒 Fiado</h2>
-    <p>Mostra todo mundo que está devendo, com o total geral no topo. Toque em <strong>"Quitar fiado"</strong> quando o cliente pagar, ou "Ver itens" pra conferir o que ele consumiu.</p>
+    <p>Mostra todo mundo que está devendo, com o total geral no topo. Quando o cliente pagar, toque na forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra quitar — isso já entra certinho nos totais do Histórico e do fechamento de caixa. "Ver itens" mostra o que ele consumiu.</p>
   </section>
 
   <section id="clientes">
     <h2>👤 Clientes e cobrança por WhatsApp</h2>
-    <p>Toda vez que você abre uma comanda com WhatsApp preenchido, o cliente já fica salvo aqui automaticamente. Também dá pra cadastrar direto nessa aba.</p>
+    <p>Toda vez que você abre uma comanda com um cliente novo, ele já fica salvo aqui automaticamente. Também dá pra cadastrar direto nessa aba.</p>
     <ul>
       <li>Clientes com fiado em aberto há <strong>7 dias ou mais</strong> aparecem destacados em vermelho no topo da lista.</li>
       <li>O botão <strong>📱 Mensagem</strong> abre o WhatsApp já com uma mensagem pronta (incluindo o valor devido, se for o caso) — só revisar e enviar.</li>
     </ul>
-    <div class="aviso">O envio da mensagem <strong>não é automático</strong> — o app avisa e prepara o texto, mas alguém precisa tocar em enviar.</div>
+    <div class="aviso">Um mesmo WhatsApp não pode virar dois cadastros diferentes. Se você tentar cadastrar um nome novo com um número que já é de outro cliente, o app avisa antes de sobrescrever — assim ninguém apaga um cadastro por engano por causa de um número parecido.</div>
+    <p>O envio da mensagem <strong>não é automático</strong> — o app avisa e prepara o texto, mas alguém precisa tocar em enviar.</p>
   </section>
 
   <section id="estoque">
     <h2>📦 Estoque</h2>
-    <div class="aviso">O frente de caixa vê essa aba só pra consulta (nome, categoria, preço, quantidade) — cadastrar, ajustar ou excluir produto é <strong>só admin</strong>.</div>
-    <h3>Cadastrar um produto</h3>
+    <div class="aviso">O frente de caixa <strong>não vê a quantidade em estoque</strong> nem pode ajustar, editar ou excluir produto — isso é <strong>só admin</strong>. O caixa só pode <strong>registrar entrada</strong> de mercadoria (quando chega uma caixa nova, por exemplo): digita a quantidade recebida e toque em <strong>+ Entrada</strong>. Cada entrada fica registrada com hora e quem lançou.</div>
+    <h3>Cadastrar um produto (admin)</h3>
     <p>Preencha nome, categoria (ex: Bebidas, Petiscos), preço, estoque inicial e o mínimo (opcional — avisa quando estiver acabando) e toque em <strong>Cadastrar produto</strong>.</p>
-    <h3>Cadastrar vários de uma vez</h3>
+    <h3>Cadastrar vários de uma vez (admin)</h3>
     <p>Toque em "📋 Cadastrar vários produtos de uma vez" e cole no formato:</p>
     <p><code>## Bebidas<br>Cerveja; 8,00; 50; 10<br>Refrigerante; 7,50; 30<br><br>## Petiscos<br>Batata frita; 25,00; 20</code></p>
     <p>Cada linha é <code>nome; preço; estoque; mínimo</code> (mínimo é opcional). As linhas com <code>## Nome</code> definem a categoria dos produtos que vêm depois.</p>
-    <h3>Repor ou ajustar estoque</h3>
-    <p>Use os botões <strong>-1 / +1</strong> pra ajuste rápido, ou digite uma quantidade e toque em <strong>Repor</strong> quando chegar uma caixa nova, por exemplo.</p>
-    <p>Produtos com estoque baixo ou esgotado ganham um aviso destacado na listagem. Vender um produto pela comanda desconta o estoque automaticamente — isso funciona pros dois papéis, só a edição manual é restrita.</p>
+    <h3>Repor ou ajustar estoque (admin)</h3>
+    <p>Use os botões <strong>-1 / +1</strong> pra ajuste rápido, ou digite uma quantidade e toque em <strong>Repor</strong> quando chegar uma caixa nova, por exemplo. Só o admin vê a quantidade exata e o histórico de entradas registradas pelo caixa (botão "📦 Entradas de estoque registradas pelo caixa", no topo da aba).</p>
+    <p>Produtos com estoque baixo ou esgotado ganham um aviso destacado na listagem (o caixa só vê "ESGOTADO", sem o número). Vender um produto pela comanda desconta o estoque automaticamente — isso funciona pros dois papéis, só a edição manual é restrita.</p>
   </section>
 
   <section id="caixa-fisico">

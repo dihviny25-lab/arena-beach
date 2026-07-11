@@ -148,7 +148,10 @@ let sessaoAtual = null; // { token, role, usuario }
 let adminSubTab = "resumo";
 let editandoProdutoId = null;
 let periodoComparacao = 7;
-let clienteSelecionadoAbrirId = null;
+let novaComandaAberta = false;
+let novaComandaClienteId = null;
+let novaComandaItens = [];
+let entradasEstoque = [];
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -195,6 +198,8 @@ async function loadAll(){
   if(sessaoAtual && sessaoAtual.role === "admin"){
     const { data: turnosData, error: e5 } = await sb.rpc("admin_obter_turnos", { p_token: sessaoAtual.token });
     if(e5){ console.error(e5); } else { turnos = turnosData || []; }
+    const { data: entradasData, error: e6 } = await sb.rpc("admin_obter_entradas_estoque", { p_token: sessaoAtual.token });
+    if(e6){ console.error(e6); } else { entradasEstoque = entradasData || []; }
   }
 
   render();
@@ -212,28 +217,40 @@ async function loadAll(){
   }
 }
 
-async function abrirComanda(nome, celular, clienteIdSelecionado){
+async function criarComandaComItens(nome, celular, clienteIdSelecionado, itensPayload){
   nome = nome.trim();
-  if(!nome) return;
   celular = (celular || "").trim();
+  if(!nome){ toast("Preencha o nome do cliente"); return; }
+  if(!celular){ toast("WhatsApp do cliente é obrigatório"); return; }
+  if(!itensPayload || itensPayload.length === 0){ toast("Adicione pelo menos um item"); return; }
 
-  // Função atômica no banco: evita duas comandas duplicadas se dois
-  // funcionários abrirem pro mesmo cliente ao mesmo tempo.
-  const { data, error } = await sb.rpc("abrir_ou_continuar_comanda", {
-    p_nome: nome, p_celular: celular || null, p_cliente_id: clienteIdSelecionado || null
+  if(!clienteIdSelecionado){
+    const existente = clientes.find(c => c.celular === celular);
+    if(existente && existente.nome !== nome){
+      const usarExistente = confirm(`Esse WhatsApp já está cadastrado como "${existente.nome}". Usar o cadastro existente em vez de "${nome}"?`);
+      if(usarExistente){ clienteIdSelecionado = existente.id; nome = existente.nome; }
+    }
+  }
+
+  // Função atômica no banco: cria (ou reaproveita) a comanda do cliente e já
+  // lança todos os itens junto, numa transação só. Evita duas comandas
+  // duplicadas se dois funcionários abrirem pro mesmo cliente ao mesmo tempo.
+  const { data, error } = await sb.rpc("criar_comanda_com_itens", {
+    p_nome: nome, p_celular: celular, p_cliente_id: clienteIdSelecionado || null, p_itens: itensPayload
   });
-  if(error){
-    if(error.code === "23505"){ toast("Já existe uma comanda aberta com esse nome"); }
-    else { toast("Erro ao abrir comanda"); console.error(error); }
-    return;
-  }
-  const resultado = data && data[0];
-  if(resultado && resultado.reaproveitada){
-    toast("Cliente já tinha comanda em aberto — continuando nela");
-    openComandaId = resultado.comanda_id;
-  } else {
-    toast("Comanda aberta");
-  }
+  if(error){ toast(error.message || "Erro ao criar comanda"); console.error(error); return; }
+
+  const r = data && data[0];
+  if(!r){ toast("Erro ao criar comanda"); return; }
+  toast(r.reaproveitada
+    ? `Cliente já tinha comanda em aberto — ${r.adicionados} item(ns) lançado(s) nela`
+    : `Comanda criada com ${r.adicionados} item(ns)`);
+  if(r.erros && r.erros.length) toast(r.erros.join("; "));
+
+  novaComandaAberta = false;
+  novaComandaClienteId = null;
+  novaComandaItens = [];
+  openComandaId = r.comanda_id;
   await loadAll();
 }
 
@@ -241,6 +258,11 @@ async function cadastrarCliente(nome, celular){
   nome = nome.trim();
   celular = (celular || "").trim();
   if(!nome || !celular){ toast("Preencha nome e WhatsApp"); return; }
+  const existente = clientes.find(c => c.celular === celular);
+  if(existente && existente.nome !== nome){
+    const confirmar = confirm(`Esse WhatsApp já está cadastrado como "${existente.nome}". Deseja atualizar o nome para "${nome}"?`);
+    if(!confirmar) return;
+  }
   const { error } = await sb.from("clientes").upsert({ nome, celular }, { onConflict: "celular" });
   if(error){ toast("Erro ao cadastrar cliente"); console.error(error); return; }
   toast("Cliente cadastrado");
@@ -297,16 +319,17 @@ async function addProdutoItem(comandaId, produtoId){
   await loadAll();
 }
 
-async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria){
+async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria, tipo){
   nome = nome.trim();
   preco = parseFloat(String(preco).replace(",","."));
   const estoqueNum = parseInt(estoque, 10) || 0;
   const minimoNum = parseInt(estoqueMinimo, 10);
   const categoriaFinal = (categoria || "").trim() || null;
+  const tipoFinal = tipo === "servico" ? "servico" : "produto";
   if(!nome || isNaN(preco) || preco < 0){ toast("Preencha nome e preço"); return; }
   const { error } = await sb.rpc("admin_cadastrar_produto", {
     p_token: sessaoAtual.token, p_nome: nome, p_preco: preco, p_estoque: estoqueNum,
-    p_minimo: isNaN(minimoNum) ? null : minimoNum, p_categoria: categoriaFinal
+    p_minimo: isNaN(minimoNum) ? null : minimoNum, p_categoria: categoriaFinal, p_tipo: tipoFinal
   });
   if(error){
     if(error.code === "23505"){ toast("Já existe um produto com esse nome"); }
@@ -320,6 +343,15 @@ async function cadastrarProduto(nome, preco, estoque, estoqueMinimo, categoria){
 async function ajustarEstoque(produtoId, delta){
   const { error } = await sb.rpc("admin_ajustar_estoque", { p_token: sessaoAtual.token, p_produto_id: produtoId, p_delta: delta });
   if(error){ toast(error.message || "Erro ao ajustar estoque"); console.error(error); return; }
+  await loadAll();
+}
+
+async function registrarEntradaEstoque(produtoId, quantidade){
+  const { error } = await sb.rpc("registrar_entrada_estoque", {
+    p_token: sessaoAtual.token, p_produto_id: produtoId, p_quantidade: quantidade
+  });
+  if(error){ toast(error.message || "Erro ao registrar entrada"); console.error(error); return; }
+  toast("Entrada de estoque registrada");
   await loadAll();
 }
 
@@ -360,13 +392,13 @@ async function marcarFiado(comandaId){
   }).eq("id", comandaId);
   if(error){ toast("Erro ao marcar fiado"); console.error(error); return; }
   toast("Marcado como fiado");
-  openComandaId = null;
+  // mantém a comanda aberta na tela pra já mostrar o botão de WhatsApp
   await loadAll();
 }
 
-async function quitarFiado(comandaId){
+async function quitarFiado(comandaId, forma){
   const { error } = await sb.from("comandas").update({
-    status: "paga", forma_pagamento: "fiado"
+    status: "paga", forma_pagamento: forma
   }).eq("id", comandaId);
   if(error){ toast("Erro ao quitar"); return; }
   toast("Fiado quitado");
@@ -544,6 +576,11 @@ window.toggleBulkProdutos = function(){
   if(area) area.style.display = area.style.display === "none" ? "block" : "none";
 };
 
+window.toggleEntradasEstoque = function(){
+  const area = document.getElementById("entradas-estoque-area");
+  if(area) area.style.display = area.style.display === "none" ? "block" : "none";
+};
+
 window.onCadastrarProdutosEmLote = async function(){
   const textarea = document.getElementById("produtos-bulk");
   const raw = textarea.value;
@@ -611,6 +648,7 @@ function render(){
   else if(tab === "admin") renderAdmin();
   else if(tab === "historico") renderHistorico();
   renderDetailSheet();
+  renderNovaComandaSheet();
 }
 
 // ---------- Admin: Caixa / Vendas / Excluídas ----------
@@ -988,7 +1026,7 @@ function desenharGraficos(){
     });
   }
 
-  const previsoes = produtos.map(p => {
+  const previsoes = produtos.filter(p => p.tipo !== "servico").map(p => {
     const qtdVendida = contagemProduto[p.id] || 0;
     const mediaDiaria = qtdVendida / 30;
     const diasRestantes = mediaDiaria > 0 ? p.estoque / mediaDiaria : Infinity;
@@ -1073,19 +1111,30 @@ function renderClientes(){
 }
 
 function produtoCardHtml(p, isAdmin){
-  const baixo = p.estoque <= 0
-    ? `<span class="badge badge-fiado">ESGOTADO</span>`
-    : p.estoque <= p.estoque_minimo
-      ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
-      : "";
+  const isServico = p.tipo === "servico";
+  const baixo = isServico
+    ? `<span class="badge badge-paga">SERVIÇO</span>`
+    : p.estoque <= 0
+      ? `<span class="badge badge-fiado">ESGOTADO</span>`
+      : p.estoque <= p.estoque_minimo
+        ? `<span class="badge badge-fiado">ESTOQUE BAIXO</span>`
+        : "";
+  const linhaEstoque = isServico ? fmt(p.preco) : `${fmt(p.preco)} · em estoque: ${p.estoque}`;
   if(!isAdmin){
+    // Frente de caixa só registra entrada de estoque: não vê quantidade nem estoque mínimo.
+    const badgeCaixa = (!isServico && p.estoque <= 0) ? `<span class="badge badge-fiado">ESGOTADO</span>` : "";
     return `
     <div class="card paper-card">
       <div class="row">
-        <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
-          <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
+        <div><strong>${escapeHtml(p.nome)}</strong> ${badgeCaixa}
+          <div class="muted">${fmt(p.preco)}</div>
         </div>
       </div>
+      ${isServico ? "" : `
+      <div class="form-row" style="margin-top:10px;">
+        <input id="entrada-${p.id}" placeholder="Qtd. recebida" inputmode="numeric" />
+        <button class="btn btn-accent" onclick="onRegistrarEntradaEstoque('${p.id}')">+ Entrada</button>
+      </div>`}
     </div>`;
   }
   if(editandoProdutoId === p.id){
@@ -1097,7 +1146,7 @@ function produtoCardHtml(p, isAdmin){
       </div>
       <div class="form-row">
         <input id="edit-preco-${p.id}" placeholder="Preço" inputmode="decimal" value="${p.preco}" />
-        <input id="edit-minimo-${p.id}" placeholder="Mínimo" inputmode="numeric" value="${p.estoque_minimo}" />
+        ${isServico ? "" : `<input id="edit-minimo-${p.id}" placeholder="Mínimo" inputmode="numeric" value="${p.estoque_minimo}" />`}
       </div>
       <div class="form-row">
         <button class="btn btn-accent" onclick="onSalvarEdicaoProduto('${p.id}')">Salvar</button>
@@ -1109,17 +1158,19 @@ function produtoCardHtml(p, isAdmin){
   <div class="card paper-card">
     <div class="row">
       <div><strong>${escapeHtml(p.nome)}</strong> ${baixo}
-        <div class="muted">${fmt(p.preco)} · em estoque: ${p.estoque}</div>
+        <div class="muted">${linhaEstoque}</div>
       </div>
+      ${isServico ? "" : `
       <div class="row" style="gap:6px;width:auto;">
         <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',-1)">-1</button>
         <button class="btn btn-ghost" onclick="ajustarEstoque('${p.id}',1)">+1</button>
-      </div>
+      </div>`}
     </div>
+    ${isServico ? "" : `
     <div class="form-row" style="margin-top:10px;">
       <input id="repor-${p.id}" placeholder="Qtd. para repor" inputmode="numeric" />
       <button class="btn btn-accent" onclick="onReporEstoque('${p.id}')">Repor</button>
-    </div>
+    </div>`}
     <div class="form-row">
       <button class="btn btn-ghost" onclick="onEditarProduto('${p.id}')">Editar</button>
       <button class="btn btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
@@ -1138,7 +1189,13 @@ function renderEstoque(){
         <input id="prod-categoria" placeholder="Categoria (ex: Bebidas)" />
       </div>
       <div class="form-row">
+        <select id="prod-tipo" onchange="onMudarTipoProduto()">
+          <option value="produto">Produto (com estoque)</option>
+          <option value="servico">Serviço (sem estoque)</option>
+        </select>
         <input id="prod-preco" placeholder="Preço" inputmode="decimal" style="max-width:90px;" />
+      </div>
+      <div class="form-row" id="prod-estoque-campos">
         <input id="prod-estoque" placeholder="Estoque inicial" inputmode="numeric" />
         <input id="prod-minimo" placeholder="Mínimo (opc.)" inputmode="numeric" />
       </div>
@@ -1155,6 +1212,21 @@ function renderEstoque(){
       </div>
     </div>
     `;
+    if(entradasEstoque.length){
+      html += `
+      <div class="card">
+        <button class="btn btn-ghost" style="width:100%;" onclick="toggleEntradasEstoque()">📦 Entradas de estoque registradas pelo caixa (${entradasEstoque.length})</button>
+        <div id="entradas-estoque-area" style="display:none; margin-top:10px;">
+          ${entradasEstoque.map(e => `
+            <div class="item-row">
+              <span>${escapeHtml(e.produto_nome)} <span class="muted">+${e.quantidade}</span></span>
+              <span class="muted">${escapeHtml(e.registrado_por)} · ${fmtDate(e.criado_em)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </div>
+      `;
+    }
   }
   if(produtos.length === 0){
     html += `<div class="empty">Nenhum produto cadastrado ainda.</div>`;
@@ -1176,17 +1248,10 @@ function renderEstoque(){
 function renderAbertas(){
   const abertas = comandas.filter(c => c.status === "aberta");
   let html = `
-    <div class="card">
-      <div class="form-row">
-        <input id="novo-nome" placeholder="Nome do cliente (busca automática)" autocomplete="off" />
-        <input id="novo-celular" placeholder="Celular (opc.)" inputmode="tel" style="max-width:130px;" />
-        <button class="btn btn-accent" onclick="onAbrirComanda()">Abrir</button>
-      </div>
-      <div id="clientes-sugestoes"></div>
-    </div>
+    <button class="btn btn-accent" style="width:100%;margin-bottom:12px;" onclick="onAbrirNovaComanda()">+ Abrir comanda</button>
   `;
   if(abertas.length === 0){
-    html += `<div class="empty">Nenhuma comanda aberta.<br>Digite um nome acima para abrir uma.</div>`;
+    html += `<div class="empty">Nenhuma comanda aberta.<br>Toque em "Abrir comanda" acima para começar.</div>`;
   } else {
     html += abertas.map(c => `
       <div class="card paper-card" onclick="openDetail('${c.id}')" style="cursor:pointer;">
@@ -1200,27 +1265,129 @@ function renderAbertas(){
     `).join("");
   }
   app.innerHTML = html;
-  const inp = document.getElementById("novo-nome");
-  const celInp = document.getElementById("novo-celular");
-  const sugg = document.getElementById("clientes-sugestoes");
-  if(inp){
-    inp.addEventListener("keydown", e => { if(e.key === "Enter") celInp.focus(); });
-    inp.addEventListener("input", () => {
-      clienteSelecionadoAbrirId = null;
-      const termo = inp.value.trim().toLowerCase();
+}
+
+// ---------- Nova comanda: cliente + itens numa tela só ----------
+function renderNovaComandaSheet(usarClienteSelecionado){
+  let existing = document.getElementById("nova-comanda-overlay");
+  // Preserva o que já estava digitado nos campos de nome/WhatsApp: adicionar
+  // ou remover um item reconstrói a tela inteira, e isso não pode apagar o
+  // que a pessoa já tinha digitado (só substitui pelo cliente selecionado
+  // na busca quando for exatamente essa a ação).
+  const nomeDigitado = (existing && !usarClienteSelecionado) ? document.getElementById("nc-nome")?.value : null;
+  const celularDigitado = (existing && !usarClienteSelecionado) ? document.getElementById("nc-celular")?.value : null;
+  const focoAtivo = document.activeElement && document.activeElement.id;
+  if(existing) existing.remove();
+  if(!novaComandaAberta) return;
+
+  const grupos = {};
+  produtos.forEach(p => {
+    const cat = p.categoria || "Outros";
+    (grupos[cat] = grupos[cat] || []).push(p);
+  });
+  const categorias = Object.keys(grupos).sort((a,b) => a.localeCompare(b, 'pt-BR'));
+
+  const clienteSelecionado = clientes.find(c => c.id === novaComandaClienteId);
+  const valorNome = nomeDigitado !== null ? nomeDigitado : (clienteSelecionado ? clienteSelecionado.nome : "");
+  const valorCelular = celularDigitado !== null ? celularDigitado : (clienteSelecionado ? clienteSelecionado.celular : "");
+  const totalStaged = novaComandaItens.reduce((s,it) => s + (it.tipo === "produto" ? it.preco * it.quantidade : it.valor), 0);
+
+  const itensHtml = novaComandaItens.length ? novaComandaItens.map((it, idx) => `
+    <div class="item-row">
+      <span>${it.tipo === "produto" ? `${escapeHtml(it.nome)} x${it.quantidade}` : escapeHtml(it.descricao)}</span>
+      <span style="display:flex;align-items:center;gap:8px;">
+        ${fmt(it.tipo === "produto" ? it.preco * it.quantidade : it.valor)}
+        <button class="x" onclick="onRemoverItemNovaComanda(${idx})">&times;</button>
+      </span>
+    </div>
+  `).join("") : `<div class="muted" style="padding:8px 0;">Nenhum item adicionado ainda.</div>`;
+
+  const produtosHtml = produtos.length ? categorias.map(cat => `
+    <div class="muted" style="font-weight:700;text-transform:uppercase;font-size:11px;margin:8px 0 2px;">${escapeHtml(cat)}</div>
+    ${grupos[cat].map(p => {
+      const jaNoCarrinho = novaComandaItens.filter(it => it.produto_id === p.id).reduce((s,it)=>s+it.quantidade,0);
+      const semEstoque = p.tipo === "produto" && (p.estoque - jaNoCarrinho) <= 0;
+      const isAdminNC = sessaoAtual.role === "admin";
+      const statusTxt = p.tipo === "servico" ? "serviço" : (semEstoque ? "esgotado" : (isAdminNC ? (p.estoque - jaNoCarrinho) + " rest." : "disponível"));
+      return `
+      <div class="item-row">
+        <span>${escapeHtml(p.nome)} <span class="muted">(${fmt(p.preco)})</span></span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span class="muted">${statusTxt}</span>
+          <button class="btn btn-accent" style="padding:4px 10px;" ${semEstoque ? "disabled" : ""} onclick="adicionarProdutoNovaComanda('${p.id}')">+</button>
+        </span>
+      </div>`;
+    }).join("")}
+  `).join("") : `<div class="muted" style="padding:8px 0;">Nenhum produto cadastrado no Estoque ainda.</div>`;
+
+  const html = `
+    <div class="overlay" id="nova-comanda-overlay" onclick="if(event.target===this) onCancelarNovaComanda()">
+      <div class="sheet">
+        <div class="row">
+          <h2>Nova comanda</h2>
+          <button class="x" onclick="onCancelarNovaComanda()">&times;</button>
+        </div>
+
+        <div class="muted" style="margin:6px 0 4px;">Cliente (obrigatório)</div>
+        <div class="form-row">
+          <input id="nc-nome" placeholder="Nome do cliente" autocomplete="off" value="${escapeHtml(valorNome)}" />
+        </div>
+        <div class="form-row">
+          <input id="nc-celular" placeholder="WhatsApp" inputmode="tel" value="${escapeHtml(valorCelular)}" />
+        </div>
+        <div id="nc-sugestoes"></div>
+
+        <div class="muted" style="margin:14px 0 4px;">Itens (pelo menos 1)</div>
+        <div class="card" style="padding:8px 12px;max-height:220px;overflow-y:auto;">
+          ${produtosHtml}
+        </div>
+        <div class="form-row" style="margin-top:8px;">
+          <input id="nc-item-desc" placeholder="Outro item (avulso)" />
+          <input id="nc-item-valor" placeholder="Valor" inputmode="decimal" style="max-width:90px;" />
+          <button class="btn btn-ghost" onclick="onAdicionarAvulsoNovaComanda()">+</button>
+        </div>
+
+        <div class="muted" style="margin:14px 0 4px;">Resumo</div>
+        <div class="card" style="padding:8px 12px;">${itensHtml}</div>
+        <div class="row" style="margin:10px 0;">
+          <strong>Total</strong>
+          <span class="total">${fmt(totalStaged)}</span>
+        </div>
+
+        <button class="btn btn-accent" style="width:100%;" onclick="onCriarNovaComanda()">Criar comanda</button>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML("beforeend", html);
+
+  if(focoAtivo === "nc-nome" || focoAtivo === "nc-celular"){
+    const elFoco = document.getElementById(focoAtivo);
+    if(elFoco){
+      elFoco.focus();
+      const v = elFoco.value;
+      elFoco.setSelectionRange(v.length, v.length);
+    }
+  }
+
+  const nomeInp = document.getElementById("nc-nome");
+  if(nomeInp){
+    nomeInp.addEventListener("input", () => {
+      novaComandaClienteId = null;
+      const termo = nomeInp.value.trim().toLowerCase();
+      const sugg = document.getElementById("nc-sugestoes");
+      if(!sugg) return;
       if(!termo){ sugg.innerHTML = ""; return; }
       const encontrados = clientes.filter(c => c.nome.toLowerCase().includes(termo)).slice(0, 5);
       sugg.innerHTML = encontrados.map(c => {
         const fiadoCliente = comandas.find(cd => cd.cliente_id === c.id && cd.status === "fiado");
         return `
-        <div class="item-row" style="cursor:pointer;" onclick="onSelecionarClienteAbrir('${c.id}')">
+        <div class="item-row" style="cursor:pointer;" onclick="onSelecionarClienteNovaComanda('${c.id}')">
           <span>${escapeHtml(c.nome)} <span class="muted">${escapeHtml(c.celular)}</span></span>
           ${fiadoCliente ? `<span class="badge badge-fiado">deve ${fmt(fiadoCliente.total)}</span>` : ""}
         </div>`;
       }).join("");
     });
   }
-  if(celInp) celInp.addEventListener("keydown", e => { if(e.key === "Enter") onAbrirComanda(); });
 }
 
 function renderFiado(){
@@ -1245,7 +1412,11 @@ function renderFiado(){
         </div>
         <div class="foot-actions">
           <button class="btn btn-ghost" onclick="openDetail('${c.id}')">Ver itens</button>
-          <button class="btn btn-accent" onclick="quitarFiado('${c.id}')">Quitar fiado</button>
+        </div>
+        <div class="payopts">
+          <button class="btn btn-accent" onclick="quitarFiado('${c.id}','dinheiro')">💵 Dinheiro</button>
+          <button class="btn btn-accent" onclick="quitarFiado('${c.id}','pix')">📱 Pix</button>
+          <button class="btn btn-accent" onclick="quitarFiado('${c.id}','cartao')">💳 Cartão</button>
         </div>
       </div>
     `).join("");
@@ -1319,7 +1490,7 @@ function renderDetailSheet(){
   const itensHtml = c.itens.length
     ? c.itens.map(i => `
         <div class="item-row">
-          <span>${escapeHtml(i.descricao)}</span>
+          <span>${escapeHtml(i.descricao)} <span class="muted" style="font-size:11px;">${fmtDate(i.criado_em)}</span></span>
           <span style="display:flex;align-items:center;gap:10px;">
             ${fmt(i.valor)}
             ${c.status === "aberta" ? `<button class="x" onclick="removeItem('${i.id}')">&times;</button>` : ""}
@@ -1346,8 +1517,8 @@ function renderDetailSheet(){
           <div class="item-row">
             <span>${escapeHtml(p.nome)} <span class="muted">(${fmt(p.preco)})</span></span>
             <span style="display:flex;align-items:center;gap:8px;">
-              <span class="muted">${p.estoque <= 0 ? "esgotado" : p.estoque + " rest."}</span>
-              <button class="btn btn-accent" style="padding:4px 10px;" ${p.estoque<=0 ? "disabled" : ""} onclick="addProdutoItem('${c.id}','${p.id}')">+</button>
+              <span class="muted">${p.tipo === "servico" ? "serviço" : (p.estoque <= 0 ? "esgotado" : p.estoque + " rest.")}</span>
+              <button class="btn btn-accent" style="padding:4px 10px;" ${p.tipo !== "servico" && p.estoque<=0 ? "disabled" : ""} onclick="addProdutoItem('${c.id}','${p.id}')">+</button>
             </span>
           </div>
         `).join("")}
@@ -1393,7 +1564,17 @@ function renderDetailSheet(){
       <button class="btn btn-warn" style="width:100%" onclick="marcarFiado('${c.id}')">Fechar como Fiado</button>
     `;
   } else if(c.status === "fiado"){
-    actionsHtml = `<button class="btn btn-accent" style="width:100%" onclick="quitarFiado('${c.id}')">Quitar fiado</button>`;
+    const clienteFiado = clientes.find(cl => cl.id === c.cliente_id);
+    const mensagemFiado = `Oi ${c.nome}! Aqui é do Arena Araçá 🍺 Passando pra lembrar que está pendente ${fmt(c.total)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`;
+    actionsHtml = `
+      ${clienteFiado ? `<div class="foot-actions"><a class="btn btn-accent" style="text-align:center;text-decoration:none;" target="_blank" rel="noopener" href="${linkWhatsapp(clienteFiado.celular, mensagemFiado)}">📱 Mensagem</a></div>` : ""}
+      <div class="muted" style="margin:10px 0 4px;">Quitar fiado com:</div>
+      <div class="payopts">
+        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','dinheiro')">💵 Dinheiro</button>
+        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','pix')">📱 Pix</button>
+        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','cartao')">💳 Cartão</button>
+      </div>
+    `;
   } else {
     actionsHtml = `<button class="btn btn-ghost" style="width:100%" onclick="reabrirComanda('${c.id}')">Reabrir comanda</button>`;
   }
@@ -1429,22 +1610,57 @@ function escapeHtml(s){
 }
 
 // ---------- Event handlers exposed globally ----------
-window.onAbrirComanda = () => {
-  const inp = document.getElementById("novo-nome");
-  const cel = document.getElementById("novo-celular");
-  abrirComanda(inp.value, cel.value, clienteSelecionadoAbrirId);
-  inp.value = ""; cel.value = "";
-  clienteSelecionadoAbrirId = null;
-  const sugg = document.getElementById("clientes-sugestoes");
-  if(sugg) sugg.innerHTML = "";
+window.onAbrirNovaComanda = () => {
+  novaComandaAberta = true;
+  novaComandaClienteId = null;
+  novaComandaItens = [];
+  renderNovaComandaSheet();
 };
-window.onSelecionarClienteAbrir = (clienteId) => {
+window.onCancelarNovaComanda = () => {
+  novaComandaAberta = false;
+  novaComandaClienteId = null;
+  novaComandaItens = [];
+  renderNovaComandaSheet();
+};
+window.onSelecionarClienteNovaComanda = (clienteId) => {
   const cli = clientes.find(c => c.id === clienteId);
   if(!cli) return;
-  document.getElementById("novo-nome").value = cli.nome;
-  document.getElementById("novo-celular").value = cli.celular;
-  clienteSelecionadoAbrirId = cli.id;
-  document.getElementById("clientes-sugestoes").innerHTML = "";
+  novaComandaClienteId = cli.id;
+  renderNovaComandaSheet(true);
+};
+window.adicionarProdutoNovaComanda = (produtoId) => {
+  const p = produtos.find(x => x.id === produtoId);
+  if(!p) return;
+  if(p.tipo === "produto"){
+    const jaAdicionado = novaComandaItens.filter(it => it.produto_id === produtoId).reduce((s,it)=>s+it.quantidade,0);
+    if(p.estoque - jaAdicionado <= 0){ toast("Sem estoque disponível para adicionar mais"); return; }
+  }
+  const existente = novaComandaItens.find(it => it.tipo === "produto" && it.produto_id === produtoId);
+  if(existente) existente.quantidade++;
+  else novaComandaItens.push({ tipo: "produto", produto_id: produtoId, nome: p.nome, preco: p.preco, quantidade: 1 });
+  renderNovaComandaSheet();
+};
+window.onAdicionarAvulsoNovaComanda = () => {
+  const desc = document.getElementById("nc-item-desc");
+  const valorInp = document.getElementById("nc-item-valor");
+  const descricao = desc.value.trim();
+  const valor = parseFloat(valorInp.value.replace(",", "."));
+  if(!descricao || isNaN(valor) || valor <= 0){ toast("Preencha descrição e valor"); return; }
+  novaComandaItens.push({ tipo: "avulso", descricao, valor });
+  desc.value = ""; valorInp.value = "";
+  renderNovaComandaSheet();
+};
+window.onRemoverItemNovaComanda = (idx) => {
+  novaComandaItens.splice(idx, 1);
+  renderNovaComandaSheet();
+};
+window.onCriarNovaComanda = () => {
+  const nome = document.getElementById("nc-nome").value;
+  const celular = document.getElementById("nc-celular").value;
+  const payload = novaComandaItens.map(it => it.tipo === "produto"
+    ? { produto_id: it.produto_id, quantidade: it.quantidade }
+    : { descricao: it.descricao, valor: it.valor });
+  criarComandaComItens(nome, celular, novaComandaClienteId, payload);
 };
 window.onAddItem = (comandaId) => {
   const desc = document.getElementById("item-desc");
@@ -1464,14 +1680,21 @@ window.excluirComanda = excluirComanda;
 window.addProdutoItem = addProdutoItem;
 window.ajustarEstoque = ajustarEstoque;
 window.excluirProduto = excluirProduto;
+window.onMudarTipoProduto = () => {
+  const tipo = document.getElementById("prod-tipo").value;
+  const campos = document.getElementById("prod-estoque-campos");
+  if(campos) campos.style.display = tipo === "servico" ? "none" : "flex";
+};
 window.onCadastrarProduto = () => {
   const nome = document.getElementById("prod-nome");
   const preco = document.getElementById("prod-preco");
   const estoque = document.getElementById("prod-estoque");
   const minimo = document.getElementById("prod-minimo");
   const categoria = document.getElementById("prod-categoria");
-  cadastrarProduto(nome.value, preco.value, estoque.value, minimo.value, categoria.value);
-  nome.value = ""; preco.value = ""; estoque.value = ""; minimo.value = ""; categoria.value = "";
+  const tipo = document.getElementById("prod-tipo");
+  cadastrarProduto(nome.value, preco.value, estoque.value, minimo.value, categoria.value, tipo.value);
+  nome.value = ""; preco.value = ""; estoque.value = ""; minimo.value = ""; categoria.value = ""; tipo.value = "produto";
+  onMudarTipoProduto();
 };
 window.onReporEstoque = (produtoId) => {
   const inp = document.getElementById(`repor-${produtoId}`);
@@ -1480,13 +1703,21 @@ window.onReporEstoque = (produtoId) => {
   ajustarEstoque(produtoId, qtd);
   inp.value = "";
 };
+window.onRegistrarEntradaEstoque = (produtoId) => {
+  const inp = document.getElementById(`entrada-${produtoId}`);
+  const qtd = parseInt(inp.value, 10);
+  if(!qtd || qtd <= 0){ toast("Informe uma quantidade válida"); return; }
+  registrarEntradaEstoque(produtoId, qtd);
+  inp.value = "";
+};
 window.onEditarProduto = (produtoId) => { editandoProdutoId = produtoId; render(); };
 window.onCancelarEdicaoProduto = () => { editandoProdutoId = null; render(); };
 window.onSalvarEdicaoProduto = (produtoId) => {
   const nome = document.getElementById(`edit-nome-${produtoId}`).value;
   const categoria = document.getElementById(`edit-categoria-${produtoId}`).value;
   const preco = parseFloat(document.getElementById(`edit-preco-${produtoId}`).value.replace(",","."));
-  const minimo = parseInt(document.getElementById(`edit-minimo-${produtoId}`).value, 10);
+  const minimoEl = document.getElementById(`edit-minimo-${produtoId}`);
+  const minimo = minimoEl ? parseInt(minimoEl.value, 10) : NaN;
   if(!nome.trim() || isNaN(preco) || preco < 0){ toast("Preencha nome e preço válidos"); return; }
   editarProduto(produtoId, nome, preco, categoria, isNaN(minimo) ? null : minimo);
 };
