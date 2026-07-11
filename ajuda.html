@@ -57,6 +57,7 @@
     <a href="#abertas">Abrir e lançar comandas</a>
     <a href="#fiado">Fiado</a>
     <a href="#clientes">Clientes e cobrança por WhatsApp</a>
+    <a href="#historico-cliente">Histórico do cliente</a>
     <a href="#estoque">Estoque</a>
     <a href="#caixa-fisico">Caixa físico (admin)</a>
     <a href="#vendas">Painel de vendas (admin)</a>
@@ -109,13 +110,22 @@
     </ul>
     <p>Só depois de ter cliente completo + pelo menos 1 item é que o botão <strong>Criar comanda</strong> funciona. Se o cliente já tinha uma comanda aberta (ou fiado em aberto), o app reaproveita a mesma em vez de criar outra — evita comanda duplicada.</p>
     <h3>Fechar a comanda</h3>
-    <p>Escolha a forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra fechar, ou toque em <strong>"Fechar como Fiado"</strong> se o cliente vai pagar depois.</p>
+    <p>No detalhe da comanda, embaixo dos itens, tem o bloco de pagamento:</p>
+    <ul>
+      <li><strong>Pagar tudo de uma vez:</strong> toque em 💵 Dinheiro, 📱 Pix ou 💳 Cartão — paga o saldo inteiro naquela forma e fecha a comanda.</li>
+      <li><strong>Dividir entre formas diferentes:</strong> toque em "➗ Dividir em mais de uma forma", escolha a forma e o valor de cada parte (ex: R$100 Pix + R$80 Cartão + R$60 Dinheiro) e toque em "Confirmar pagamento dividido". Só fecha quando a soma cobre o saldo todo.</li>
+      <li><strong>Pagar menos que o total:</strong> se o valor pago (de uma vez ou dividido) for menor que o saldo, a comanda vira <strong>fiado automaticamente</strong> com o restante — sem precisar de nenhum passo extra.</li>
+      <li><strong>Desconto:</strong> antes de pagar, dá pra preencher um valor de desconto — ele já é descontado do total antes de calcular o saldo.</li>
+      <li><strong>Observação:</strong> campo de texto livre pra anotar algo sobre a comanda (fica salvo e visível sempre que reabrir o detalhe).</li>
+    </ul>
+    <p>Todo pagamento já registrado (mesmo parcial) aparece listado no detalhe da comanda, com data/hora, forma e valor.</p>
     <div class="aviso"><strong>Só admin</strong> pode excluir uma comanda, e precisa digitar o motivo. A comanda não é apagada de verdade — ela fica guardada na aba Admin → Excluídas, com motivo, data e quem excluiu. Se a comanda excluída tinha produtos com desconto de estoque, o estoque volta automaticamente.</div>
+    <div class="aviso">Reabrir uma comanda paga ou fiado <strong>desfaz o fechamento por completo</strong> — apaga os pagamentos e o desconto que tinham sido lançados, pra você fechar de novo do jeito certo, sem misturar com o pagamento antigo.</div>
   </section>
 
   <section id="fiado">
     <h2>📒 Fiado</h2>
-    <p>Mostra todo mundo que está devendo, com o total geral no topo. Quando o cliente pagar, toque na forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra quitar — isso já entra certinho nos totais do Histórico e do fechamento de caixa. "Ver itens" mostra o que ele consumiu.</p>
+    <p>Mostra todo mundo que está devendo, com o total geral no topo (já contando só o que falta, se a pessoa já pagou uma parte). Quando o cliente pagar, toque na forma de pagamento (💵 Dinheiro, 📱 Pix ou 💳 Cartão) pra quitar o saldo inteiro — ou abra o detalhe da comanda ("Ver itens") pra fazer um <strong>pagamento parcial</strong> ou dividido em mais de uma forma, do mesmo jeito explicado em "Abrir e lançar comandas". O que já foi pago aparece do lado do card ("já pago R$X").</p>
   </section>
 
   <section id="clientes">
@@ -127,6 +137,15 @@
     </ul>
     <div class="aviso">Um mesmo WhatsApp não pode virar dois cadastros diferentes. Se você tentar cadastrar um nome novo com um número que já é de outro cliente, o app avisa antes de sobrescrever — assim ninguém apaga um cadastro por engano por causa de um número parecido.</div>
     <p>O envio da mensagem <strong>não é automático</strong> — o app avisa e prepara o texto, mas alguém precisa tocar em enviar.</p>
+  </section>
+
+  <section id="historico-cliente">
+    <h2>📊 Histórico do cliente</h2>
+    <p>Toque em <strong>"📊 Histórico"</strong> no card de qualquer cliente (aba Clientes) pra ver:</p>
+    <ul>
+      <li>Indicadores: total gasto, total de compras, ticket médio, saldo atual em fiado e data da última compra.</li>
+      <li>Uma <strong>linha do tempo</strong> com cada compra e cada pagamento (mesmo parcial), na ordem em que aconteceram, mostrando o saldo devedor logo depois de cada evento — dá pra acompanhar exatamente como a conta foi se acumulando e sendo paga ao longo do tempo.</li>
+    </ul>
   </section>
 
   <section id="estoque">

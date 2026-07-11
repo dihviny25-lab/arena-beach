@@ -192,20 +192,126 @@ async function testeQuitarFiadoComFormaPagamento(browser){
   page.on('pageerror', e => erros.push(e.message));
   await login(page, ADMIN_USER, ADMIN_PASS);
   await page.click('button[data-tab="fiado"]');
-  const pixBtn = await page.waitForSelector('button:has-text("📱 Pix")', { timeout: 20000 }).catch(() => null);
+  const cardSel = `.card.paper-card:has-text("${PREFIXO}clientefiado")`;
+  const pixBtn = await page.waitForSelector(`${cardSel} button:has-text("📱 Pix")`, { timeout: 20000 }).catch(() => null);
   ok('Tela de Fiado mostra opções de forma de pagamento (Pix)', !!pixBtn);
   if(pixBtn) await pixBtn.click();
   await page.waitForTimeout(1500);
   await page.close();
 
   const { data: comandaFinal } = await sb.from('comandas').select('*').eq('id', comandaTeste.id).single();
-  ok('Quitar fiado grava a forma de pagamento escolhida (pix), não mais "fiado"', comandaFinal.status === 'paga' && comandaFinal.forma_pagamento === 'pix', JSON.stringify(comandaFinal));
+  const { data: pagamentosFinal } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaTeste.id);
+  ok('Quitar fiado fecha a comanda e registra o pagamento com a forma escolhida (pix)',
+    comandaFinal.status === 'paga' && pagamentosFinal.length === 1 && pagamentosFinal[0].forma === 'pix' && Number(pagamentosFinal[0].valor) === 15,
+    JSON.stringify({ comandaFinal, pagamentosFinal }));
   ok('Sem erros de JS ao quitar fiado', erros.length === 0, erros.join(' | '));
 
   // comandas não tem DELETE direto (ver limparDadosDeTeste); a limpeza final do
   // final da suíte (por prefixo, via admin_excluir_comanda) cuida deste registro.
   await sb.from('itens').delete().eq('comanda_id', comandaTeste.id);
   await sb.from('clientes').delete().eq('id', cliTeste.id);
+}
+
+async function testePagamentoDivididoEParcial(browser){
+  const page = await browser.newPage();
+  const erros = [];
+  page.on('pageerror', e => erros.push(e.message));
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // Comanda 1: total 30 (2 itens de 15), fechada com pagamento dividido (10 pix + 20 dinheiro)
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}pagsplit`);
+  await page.fill('#nc-celular', '11933334444');
+  await page.fill('#nc-item-desc', 'Item A'); await page.fill('#nc-item-valor', '15');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.fill('#nc-item-desc', 'Item B'); await page.fill('#nc-item-valor', '15');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForTimeout(2000);
+
+  const { data: cli1 } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}pagsplit`).single();
+  const { data: comanda1 } = await sb.from('comandas').select('id').eq('cliente_id', cli1.id).single();
+
+  await page.click('button[onclick="toggleDividirPagamento()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'pix');
+  await page.fill('#pg-valor-split', '10');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'dinheiro');
+  await page.fill('#pg-valor-split', '20');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  await page.click(`button[onclick="onConfirmarPagamentoDividido('${comanda1.id}')"]`);
+  await page.waitForTimeout(1500);
+
+  const { data: comanda1Final } = await sb.from('comandas').select('status').eq('id', comanda1.id).single();
+  const { data: pagamentos1 } = await sb.from('pagamentos').select('forma,valor').eq('comanda_id', comanda1.id);
+  ok('Pagamento dividido cobrindo o total fecha a comanda', comanda1Final.status === 'paga', JSON.stringify(comanda1Final));
+  ok('Os 2 pagamentos divididos ficam registrados (pix 10 + dinheiro 20)',
+    pagamentos1.length === 2 && pagamentos1.some(p=>p.forma==='pix'&&Number(p.valor)===10) && pagamentos1.some(p=>p.forma==='dinheiro'&&Number(p.valor)===20),
+    JSON.stringify(pagamentos1));
+
+  // Comanda 2: total 40, paga parcial (15) -> vira fiado com saldo 25, depois quita o resto pela aba Fiado
+  await page.click('button[data-tab="abertas"]');
+  await page.waitForTimeout(500);
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}pagparcial`);
+  await page.fill('#nc-celular', '11933335555');
+  await page.fill('#nc-item-desc', 'Item C'); await page.fill('#nc-item-valor', '40');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForTimeout(2000);
+
+  const { data: cli2 } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}pagparcial`).single();
+  const { data: comanda2 } = await sb.from('comandas').select('id').eq('cliente_id', cli2.id).single();
+
+  await page.click('button[onclick="toggleDividirPagamento()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'dinheiro');
+  await page.fill('#pg-valor-split', '15');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  await page.click(`button[onclick="onConfirmarPagamentoDividido('${comanda2.id}')"]`);
+  await page.waitForTimeout(1500);
+
+  const { data: comanda2Parcial } = await sb.from('comandas').select('status').eq('id', comanda2.id).single();
+  ok('Pagamento parcial (15 de 40) deixa a comanda em fiado', comanda2Parcial.status === 'fiado', JSON.stringify(comanda2Parcial));
+
+  await page.click('#detail-overlay button.x');
+  await page.waitForTimeout(500);
+  await page.click('button[data-tab="fiado"]');
+  await page.waitForTimeout(800);
+  const cardSel2 = `.card.paper-card:has-text("${PREFIXO}pagparcial")`;
+  const textoCard = await page.textContent(cardSel2).catch(() => '');
+  ok('Aba Fiado mostra o saldo restante (25), não o total original (40)', textoCard.includes('25,00') && !textoCard.includes('40,00'), textoCard);
+  await page.click(`${cardSel2} button:has-text("📱 Pix")`);
+  await page.waitForTimeout(1500);
+
+  const { data: comanda2Final } = await sb.from('comandas').select('status').eq('id', comanda2.id).single();
+  const { data: pagamentos2 } = await sb.from('pagamentos').select('forma,valor').eq('comanda_id', comanda2.id).order('criado_em');
+  ok('Quitar o restante pela aba Fiado fecha a comanda', comanda2Final.status === 'paga', JSON.stringify(comanda2Final));
+  ok('Ficam registrados os 2 pagamentos parciais (15 dinheiro + 25 pix)',
+    pagamentos2.length === 2 && Number(pagamentos2[0].valor) === 15 && Number(pagamentos2[1].valor) === 25,
+    JSON.stringify(pagamentos2));
+
+  // Histórico do cliente: confere que a linha do tempo mistura compra + pagamentos
+  await page.click('button[data-tab="clientes"]');
+  await page.waitForTimeout(500);
+  await page.click(`.card.paper-card:has-text("${PREFIXO}pagparcial") button:has-text("📊 Histórico")`);
+  await page.waitForTimeout(500);
+  const textoHistorico = await page.textContent('#historico-cliente-overlay').catch(() => '');
+  ok('Histórico do cliente mostra indicadores e linha do tempo com compra e pagamento',
+    textoHistorico.includes('Total gasto') && textoHistorico.includes('Compra') && textoHistorico.includes('Pagamento'),
+    textoHistorico.slice(0, 150));
+
+  ok('Sem erros de JS no fluxo de pagamento dividido/parcial', erros.length === 0, erros.join(' | '));
+  await page.close();
 }
 
 async function testeDuplicidadeCliente(browser){
@@ -358,6 +464,9 @@ async function testeAdminDashboard(browser){
 
   console.log('\n--- Quitar fiado com forma de pagamento ---');
   await testeQuitarFiadoComFormaPagamento(browser);
+
+  console.log('\n--- Pagamento dividido, fiado parcial e histórico do cliente ---');
+  await testePagamentoDivididoEParcial(browser);
 
   console.log('\n--- Duplicidade de cliente (mesmo WhatsApp, nome diferente) ---');
   await testeDuplicidadeCliente(browser);

@@ -152,6 +152,9 @@ let novaComandaAberta = false;
 let novaComandaClienteId = null;
 let novaComandaItens = [];
 let entradasEstoque = [];
+let pagamentoStaged = []; // linhas de pagamento dividido, montadas antes de confirmar
+let dividirPagamentoAberto = false;
+let clienteHistoricoId = null; // cliente com o painel de histórico aberto
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -187,10 +190,16 @@ async function loadAll(){
   if(e3){ console.error(e3); toast("Erro ao carregar produtos"); return; }
   const { data: clis, error: e4 } = await sb.from("clientes").select("*").order("nome",{ascending:true});
   if(e4){ console.error(e4); toast("Erro ao carregar clientes"); return; }
+  const { data: pags, error: e7 } = await sb.from("pagamentos").select("*").order("criado_em",{ascending:true});
+  if(e7){ console.error(e7); toast("Erro ao carregar pagamentos"); return; }
   comandas = cmds.map(c => {
     const its = itens.filter(i => i.comanda_id === c.id);
-    const total = its.reduce((s,i)=>s+Number(i.valor),0);
-    return {...c, itens: its, total};
+    const subtotal = its.reduce((s,i)=>s+Number(i.valor),0);
+    const total = subtotal - Number(c.desconto || 0);
+    const pagamentosComanda = pags.filter(p => p.comanda_id === c.id);
+    const totalPago = pagamentosComanda.reduce((s,p)=>s+Number(p.valor),0);
+    const saldo = total - totalPago;
+    return {...c, itens: its, subtotal, total, pagamentos: pagamentosComanda, totalPago, saldo};
   });
   produtos = prods;
   clientes = clis;
@@ -376,40 +385,49 @@ async function editarProduto(produtoId, nome, preco, categoria, minimo){
   await loadAll();
 }
 
-async function fecharComPagamento(comandaId, forma){
-  const { error } = await sb.from("comandas").update({
-    status: "paga", forma_pagamento: forma, fechada_em: new Date().toISOString()
-  }).eq("id", comandaId);
-  if(error){ toast("Erro ao fechar comanda"); console.error(error); return; }
-  toast("Comanda fechada");
-  openComandaId = null;
+async function registrarPagamento(comandaId, pagamentos, desconto, observacao){
+  const { data, error } = await sb.rpc("registrar_pagamento_comanda", {
+    p_comanda_id: comandaId,
+    p_pagamentos: pagamentos || [],
+    p_desconto: desconto === undefined ? null : desconto,
+    p_observacao: observacao === undefined ? null : observacao,
+    p_token: sessaoAtual ? sessaoAtual.token : null
+  });
+  if(error){ toast(error.message || "Erro ao registrar pagamento"); console.error(error); return; }
+  const r = data && data[0];
+  if(r && r.status === "paga"){
+    toast("Comanda paga");
+    openComandaId = null;
+  } else {
+    toast(`Pagamento registrado — saldo em fiado: ${fmt(r ? r.saldo : 0)}`);
+    // mantém a comanda aberta na tela pra já mostrar o botão de WhatsApp / próximo pagamento
+  }
   await loadAll();
 }
 
 async function marcarFiado(comandaId){
-  const { error } = await sb.from("comandas").update({
-    status: "fiado", fechada_em: new Date().toISOString()
-  }).eq("id", comandaId);
-  if(error){ toast("Erro ao marcar fiado"); console.error(error); return; }
-  toast("Marcado como fiado");
-  // mantém a comanda aberta na tela pra já mostrar o botão de WhatsApp
-  await loadAll();
+  const c = comandas.find(x => x.id === comandaId);
+  // Passa o desconto atual (ainda que 0) só pra satisfazer a RPC, que exige
+  // pelo menos um de {pagamento, desconto, observação} — sem pagar nada, o
+  // saldo continua > 0 e a comanda vira fiado.
+  await registrarPagamento(comandaId, [], (c && c.desconto) || 0, undefined);
 }
 
-async function quitarFiado(comandaId, forma){
-  const { error } = await sb.from("comandas").update({
-    status: "paga", forma_pagamento: forma
-  }).eq("id", comandaId);
-  if(error){ toast("Erro ao quitar"); return; }
-  toast("Fiado quitado");
-  await loadAll();
+async function quitarFiado(comandaId, forma, valor){
+  if(valor === undefined){
+    const c = comandas.find(x => x.id === comandaId);
+    if(!c || c.saldo <= 0){ toast("Nada a pagar"); return; }
+    valor = c.saldo;
+  }
+  await registrarPagamento(comandaId, [{ forma, valor }], undefined, undefined);
 }
 
 async function reabrirComanda(comandaId){
-  const { error } = await sb.from("comandas").update({
-    status: "aberta", forma_pagamento: null, fechada_em: null
-  }).eq("id", comandaId);
-  if(error){ toast("Erro ao reabrir"); return; }
+  // Reabrir desfaz o fechamento por completo: apaga os pagamentos e o desconto
+  // registrados, senão fechar de novo bateria de frente com o pagamento antigo
+  // (a comanda pareceria já paga antes mesmo de lançar o novo pagamento).
+  const { error } = await sb.rpc("reabrir_comanda", { p_comanda_id: comandaId });
+  if(error){ toast(error.message || "Erro ao reabrir"); console.error(error); return; }
   toast("Comanda reaberta");
   await loadAll();
 }
@@ -649,6 +667,7 @@ function render(){
   else if(tab === "historico") renderHistorico();
   renderDetailSheet();
   renderNovaComandaSheet();
+  renderHistoricoClienteSheet();
 }
 
 // ---------- Admin: Caixa / Vendas / Excluídas ----------
@@ -685,7 +704,7 @@ function renderResumoSection(){
   const pagas30 = comandas.filter(c => c.status === "paga" && c.fechada_em && new Date(c.fechada_em) >= inicio30);
   const faturado30 = pagas30.reduce((s,c) => s + c.total, 0);
   const ticketMedio = pagas30.length ? faturado30 / pagas30.length : 0;
-  const totalFiado = fiados.reduce((s,c) => s + c.total, 0);
+  const totalFiado = fiados.reduce((s,c) => s + c.saldo, 0);
 
   const agora = new Date();
   const fimAtual = new Date(agora.getTime() + 1000);
@@ -747,7 +766,7 @@ function renderResumoSection(){
             ${atrasado ? `<span class="badge badge-fiado" style="background:rgba(179,57,43,.15);color:var(--danger);">ATRASADO · ${dias}d</span>` : `<span class="badge badge-fiado">${dias}d</span>`}
             <div class="muted">desde ${fmtDate(c.fechada_em || c.criada_em)}</div>
           </div>
-          <div class="total" style="color:var(--warn)">${fmt(c.total)}</div>
+          <div class="total" style="color:var(--warn)">${fmt(c.saldo)}</div>
         </div>
       </div>`;
     }).join("");
@@ -1059,6 +1078,66 @@ function diasDesde(data){
 
 const DIAS_ALERTA_FIADO = 10;
 
+function renderHistoricoClienteSheet(){
+  let existing = document.getElementById("historico-cliente-overlay");
+  if(existing) existing.remove();
+  if(!clienteHistoricoId) return;
+  const cli = clientes.find(c => c.id === clienteHistoricoId);
+  if(!cli) return;
+
+  const comandasCliente = comandas.filter(c => c.cliente_id === cli.id && c.status !== "excluida")
+    .sort((a,b) => new Date(a.criada_em) - new Date(b.criada_em));
+  const comandasPagas = comandasCliente.filter(c => c.status === "paga");
+  const totalGasto = comandasPagas.reduce((s,c)=>s+c.total,0);
+  const ticketMedio = comandasPagas.length ? totalGasto / comandasPagas.length : 0;
+  const saldoFiado = comandasCliente.filter(c => c.status === "fiado").reduce((s,c)=>s+c.saldo,0);
+  const ultimaCompra = comandasCliente.length ? comandasCliente[comandasCliente.length-1] : null;
+
+  // Linha do tempo: cada comanda vira um evento de "compra" na data de criação,
+  // e cada pagamento (total ou parcial) vira um evento próprio — igual ao
+  // extrato do documento de escopo (compra soma, pagamento subtrai o saldo).
+  const eventos = [];
+  comandasCliente.forEach(c => {
+    eventos.push({ tipo: "compra", data: c.criada_em, valor: c.total, comanda: c });
+    c.pagamentos.forEach(p => eventos.push({ tipo: "pagamento", data: p.criado_em, valor: Number(p.valor), forma: p.forma, comanda: c }));
+  });
+  eventos.sort((a,b) => new Date(a.data) - new Date(b.data));
+  let saldoAcumulado = 0;
+  eventos.forEach(e => { saldoAcumulado += e.tipo === "compra" ? e.valor : -e.valor; e.saldoNaHora = saldoAcumulado; });
+
+  const timelineHtml = eventos.length ? eventos.slice().reverse().map(e => `
+    <div class="item-row">
+      <span>
+        ${e.tipo === "compra" ? `🧾 Compra <span class="muted">(${escapeHtml(e.comanda.nome)})</span>` : `💰 Pagamento ${LABEL_PAGAMENTO[e.forma]||e.forma}`}
+        <span class="muted" style="font-size:11px;display:block;">${fmtDate(e.data)} · saldo: ${fmt(e.saldoNaHora)}</span>
+      </span>
+      <span style="color:${e.tipo==='compra' ? 'var(--text)' : 'var(--accent)'};white-space:nowrap;">${e.tipo==='compra'?'':'- '}${fmt(e.valor)}</span>
+    </div>
+  `).join("") : `<div class="muted" style="padding:10px 0;">Nenhuma movimentação ainda.</div>`;
+
+  const html = `
+    <div class="overlay" id="historico-cliente-overlay" onclick="if(event.target===this) fecharHistoricoCliente()">
+      <div class="sheet">
+        <div class="row">
+          <h2>${escapeHtml(cli.nome)}</h2>
+          <button class="x" onclick="fecharHistoricoCliente()">&times;</button>
+        </div>
+        <div class="muted" style="margin-bottom:10px;">${escapeHtml(cli.celular)}</div>
+        <div class="card" style="padding:10px 14px;">
+          <div class="item-row"><span>Total gasto</span><strong>${fmt(totalGasto)}</strong></div>
+          <div class="item-row"><span>Total de compras</span><strong>${comandasCliente.length}</strong></div>
+          <div class="item-row"><span>Ticket médio</span><strong>${fmt(ticketMedio)}</strong></div>
+          <div class="item-row"><span>Saldo em fiado</span><strong style="color:${saldoFiado>0?'var(--warn)':'inherit'}">${fmt(saldoFiado)}</strong></div>
+          <div class="item-row"><span>Última compra</span><strong>${ultimaCompra ? fmtDate(ultimaCompra.criada_em) : "-"}</strong></div>
+        </div>
+        <div class="muted" style="margin:14px 0 4px;">Linha do tempo</div>
+        <div class="card" style="padding:8px 12px;max-height:340px;overflow-y:auto;">${timelineHtml}</div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML("beforeend", html);
+}
+
 function renderClientes(){
   const DIAS_ALERTA = DIAS_ALERTA_FIADO;
   let html = `
@@ -1076,7 +1155,7 @@ function renderClientes(){
   } else {
     const linhas = clientes.map(cli => {
       const fiados = comandas.filter(c => c.cliente_id === cli.id && c.status === "fiado");
-      const totalDevendo = fiados.reduce((s,c)=>s+c.total,0);
+      const totalDevendo = fiados.reduce((s,c)=>s+c.saldo,0);
       const maisAntigo = fiados.length
         ? fiados.reduce((min,c) => new Date(c.fechada_em||c.criada_em) < new Date(min.fechada_em||min.criada_em) ? c : min)
         : null;
@@ -1101,6 +1180,7 @@ function renderClientes(){
           </div>
         </div>
         <div class="foot-actions">
+          <button class="btn btn-ghost" onclick="abrirHistoricoCliente('${cli.id}')">📊 Histórico</button>
           <a class="btn btn-accent" style="text-align:center;text-decoration:none;" target="_blank" rel="noopener" href="${linkWhatsapp(cli.celular, mensagem)}">📱 Mensagem</a>
           <button class="btn btn-danger" onclick="excluirCliente('${cli.id}')">Excluir</button>
         </div>
@@ -1383,7 +1463,7 @@ function renderNovaComandaSheet(usarClienteSelecionado){
         return `
         <div class="item-row" style="cursor:pointer;" onclick="onSelecionarClienteNovaComanda('${c.id}')">
           <span>${escapeHtml(c.nome)} <span class="muted">${escapeHtml(c.celular)}</span></span>
-          ${fiadoCliente ? `<span class="badge badge-fiado">deve ${fmt(fiadoCliente.total)}</span>` : ""}
+          ${fiadoCliente ? `<span class="badge badge-fiado">deve ${fmt(fiadoCliente.saldo)}</span>` : ""}
         </div>`;
       }).join("");
     });
@@ -1392,7 +1472,7 @@ function renderNovaComandaSheet(usarClienteSelecionado){
 
 function renderFiado(){
   const fiados = comandas.filter(c => c.status === "fiado");
-  const totalGeral = fiados.reduce((s,c)=>s+c.total,0);
+  const totalGeral = fiados.reduce((s,c)=>s+c.saldo,0);
   let html = `
     <div class="card row">
       <div><strong>Total em fiado</strong><div class="muted">${fiados.length} comanda(s) em aberto</div></div>
@@ -1406,9 +1486,9 @@ function renderFiado(){
       <div class="card paper-card">
         <div class="row">
           <div><strong>${escapeHtml(c.nome)}</strong>
-            <div class="muted">desde ${fmtDate(c.fechada_em || c.criada_em)}</div>
+            <div class="muted">desde ${fmtDate(c.fechada_em || c.criada_em)}${c.totalPago > 0 ? ` · já pago ${fmt(c.totalPago)}` : ""}</div>
           </div>
-          <div class="total" style="color:var(--warn)">${fmt(c.total)}</div>
+          <div class="total" style="color:var(--warn)">${fmt(c.saldo)}</div>
         </div>
         <div class="foot-actions">
           <button class="btn btn-ghost" onclick="openDetail('${c.id}')">Ver itens</button>
@@ -1424,7 +1504,7 @@ function renderFiado(){
   app.innerHTML = html;
 }
 
-const LABEL_PAGAMENTO = {dinheiro:"Dinheiro", pix:"Pix", cartao:"Cartão", fiado:"Fiado (quitado)"};
+const LABEL_PAGAMENTO = {dinheiro:"💵 Dinheiro", pix:"📱 Pix", cartao:"💳 Cartão"};
 
 function renderHistorico(){
   const pagas = comandas.filter(c => c.status === "paga")
@@ -1445,15 +1525,17 @@ function renderHistorico(){
     const totalDia = lista.reduce((s,c)=>s+c.total,0);
     const porForma = {};
     lista.forEach(c => {
-      const key = c.forma_pagamento || "-";
-      porForma[key] = (porForma[key]||0) + c.total;
+      c.pagamentos.forEach(p => { porForma[p.forma] = (porForma[p.forma]||0) + Number(p.valor); });
     });
     const breakdown = Object.keys(porForma)
       .map(k => `${LABEL_PAGAMENTO[k]||k}: ${fmt(porForma[k])}`)
       .join(" · ");
 
     const itensHtml = lista.map(c => {
-      const label = LABEL_PAGAMENTO[c.forma_pagamento] || c.forma_pagamento || "-";
+      const formas = [...new Set(c.pagamentos.map(p => p.forma))];
+      const label = formas.length === 0 ? "-"
+        : formas.length === 1 ? (LABEL_PAGAMENTO[formas[0]] || formas[0])
+        : `Dividido (${c.pagamentos.map(p => `${LABEL_PAGAMENTO[p.forma]||p.forma} ${fmt(p.valor)}`).join(" + ")})`;
       return `
       <div class="card paper-card" onclick="openDetail('${c.id}')" style="cursor:pointer;">
         <div class="row">
@@ -1478,6 +1560,70 @@ function renderHistorico(){
   }).join("");
 
   app.innerHTML = html;
+}
+
+function renderBlocoPagamento(c){
+  const pagamentosHtml = c.pagamentos.length ? `
+    <div class="card" style="padding:8px 12px;margin:8px 0;">
+      ${c.pagamentos.map(p => `
+        <div class="item-row">
+          <span>${LABEL_PAGAMENTO[p.forma] || p.forma} <span class="muted" style="font-size:11px;">${fmtDate(p.criado_em)}</span></span>
+          <span>${fmt(p.valor)}</span>
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
+
+  const descontoInput = c.status === "aberta" ? `
+    <div class="form-row">
+      <input id="pg-desconto" placeholder="Desconto (opcional)" inputmode="decimal" value="${c.desconto > 0 ? String(c.desconto).replace('.',',') : ''}" />
+    </div>
+  ` : "";
+
+  const stagedHtml = pagamentoStaged.length ? `
+    <div class="card" style="padding:8px 12px;margin:8px 0;">
+      ${pagamentoStaged.map((p, idx) => `
+        <div class="item-row">
+          <span>${LABEL_PAGAMENTO[p.forma] || p.forma}</span>
+          <span style="display:flex;align-items:center;gap:8px;">${fmt(p.valor)} <button class="x" onclick="onRemoverPagamentoStaged(${idx})">&times;</button></span>
+        </div>
+      `).join("")}
+    </div>
+  ` : "";
+
+  return `
+    <div class="row" style="margin:10px 0 6px;">
+      <strong>Saldo devido</strong>
+      <span class="total" style="color:var(--warn)">${fmt(c.saldo)}</span>
+    </div>
+    ${pagamentosHtml}
+    ${descontoInput}
+    <div class="form-row">
+      <input id="pg-observacao" placeholder="Observação (opcional)" value="${escapeHtml(c.observacao || '')}" />
+    </div>
+    <div class="payopts">
+      <button class="btn btn-ghost" onclick="onPagarTudo('${c.id}','dinheiro')">💵 Dinheiro</button>
+      <button class="btn btn-ghost" onclick="onPagarTudo('${c.id}','pix')">📱 Pix</button>
+      <button class="btn btn-ghost" onclick="onPagarTudo('${c.id}','cartao')">💳 Cartão</button>
+    </div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:6px;" onclick="toggleDividirPagamento()">➗ ${dividirPagamentoAberto ? "Cancelar divisão" : "Dividir em mais de uma forma"}</button>
+    ${dividirPagamentoAberto ? `
+      <div style="margin-top:8px;">
+        ${stagedHtml}
+        <div class="form-row">
+          <select id="pg-forma-split">
+            <option value="dinheiro">💵 Dinheiro</option>
+            <option value="pix">📱 Pix</option>
+            <option value="cartao">💳 Cartão</option>
+          </select>
+          <input id="pg-valor-split" placeholder="Valor" inputmode="decimal" style="max-width:100px;" />
+          <button class="btn btn-ghost" onclick="onAdicionarPagamentoDividido()">+</button>
+        </div>
+        <button class="btn btn-accent" style="width:100%;margin-top:6px;" ${pagamentoStaged.length ? "" : "disabled"} onclick="onConfirmarPagamentoDividido('${c.id}')">Confirmar pagamento dividido</button>
+      </div>
+    ` : ""}
+    <button class="btn btn-ghost" style="width:100%;margin-top:6px;" onclick="onSalvarDescontoObservacao('${c.id}')">💾 Salvar desconto/observação sem pagar</button>
+  `;
 }
 
 function renderDetailSheet(){
@@ -1556,24 +1702,15 @@ function renderDetailSheet(){
           </div>
         </div>
       </div>
-      <div class="payopts">
-        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','dinheiro')">💵 Dinheiro</button>
-        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','pix')">📱 Pix</button>
-        <button class="btn btn-ghost" onclick="fecharComPagamento('${c.id}','cartao')">💳 Cartão</button>
-      </div>
-      <button class="btn btn-warn" style="width:100%" onclick="marcarFiado('${c.id}')">Fechar como Fiado</button>
+      ${renderBlocoPagamento(c)}
+      <button class="btn btn-warn" style="width:100%;margin-top:8px;" onclick="marcarFiado('${c.id}')">Fechar como Fiado (sem pagar agora)</button>
     `;
   } else if(c.status === "fiado"){
     const clienteFiado = clientes.find(cl => cl.id === c.cliente_id);
-    const mensagemFiado = `Oi ${c.nome}! Aqui é do Arena Araçá 🍺 Passando pra lembrar que está pendente ${fmt(c.total)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`;
+    const mensagemFiado = `Oi ${c.nome}! Aqui é do Arena Araçá 🍺 Passando pra lembrar que está pendente ${fmt(c.saldo)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`;
     actionsHtml = `
       ${clienteFiado ? `<div class="foot-actions"><a class="btn btn-accent" style="text-align:center;text-decoration:none;" target="_blank" rel="noopener" href="${linkWhatsapp(clienteFiado.celular, mensagemFiado)}">📱 Mensagem</a></div>` : ""}
-      <div class="muted" style="margin:10px 0 4px;">Quitar fiado com:</div>
-      <div class="payopts">
-        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','dinheiro')">💵 Dinheiro</button>
-        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','pix')">📱 Pix</button>
-        <button class="btn btn-ghost" onclick="quitarFiado('${c.id}','cartao')">💳 Cartão</button>
-      </div>
+      ${renderBlocoPagamento(c)}
     `;
   } else {
     actionsHtml = `<button class="btn btn-ghost" style="width:100%" onclick="reabrirComanda('${c.id}')">Reabrir comanda</button>`;
@@ -1588,8 +1725,14 @@ function renderDetailSheet(){
         </div>
         <div class="muted" style="margin-bottom:10px;">Aberta em ${fmtDate(c.criada_em)}</div>
         <div class="card" style="padding:10px 14px;">${itensHtml}</div>
-        <div class="row" style="margin:12px 0;">
-          <strong>Total</strong>
+        ${c.observacao ? `<div class="muted" style="margin-top:8px;">📝 ${escapeHtml(c.observacao)}</div>` : ""}
+        <div class="row" style="margin:12px 0 2px;">
+          <strong>Subtotal</strong>
+          <span>${fmt(c.subtotal)}</span>
+        </div>
+        ${c.desconto > 0 ? `<div class="row" style="margin:2px 0;color:var(--warn);"><span>Desconto</span><span>- ${fmt(c.desconto)}</span></div>` : ""}
+        <div class="row" style="margin:2px 0 12px;">
+          <strong>${c.status === "paga" ? "Total pago" : "Total"}</strong>
           <span class="total">${fmt(c.total)}</span>
         </div>
         ${actionsHtml}
@@ -1669,12 +1812,63 @@ window.onAddItem = (comandaId) => {
   desc.value = ""; valor.value = "";
   desc.focus();
 };
-window.openDetail = (id) => { openComandaId = id; renderDetailSheet(); };
-window.closeDetail = () => { openComandaId = null; renderDetailSheet(); };
+window.openDetail = (id) => { openComandaId = id; pagamentoStaged = []; dividirPagamentoAberto = false; renderDetailSheet(); };
+window.closeDetail = () => { openComandaId = null; pagamentoStaged = []; dividirPagamentoAberto = false; renderDetailSheet(); };
 window.removeItem = removeItem;
-window.fecharComPagamento = fecharComPagamento;
 window.marcarFiado = marcarFiado;
 window.quitarFiado = quitarFiado;
+window.onPagarTudo = (comandaId, forma) => {
+  const c = comandas.find(x => x.id === comandaId);
+  if(!c) return;
+  const descontoInp = document.getElementById("pg-desconto");
+  const descontoDigitado = descontoInp ? parseFloat((descontoInp.value||"").replace(",",".")) : NaN;
+  const temDesconto = !isNaN(descontoDigitado);
+  const obsInp = document.getElementById("pg-observacao");
+  const observacao = obsInp && obsInp.value.trim() ? obsInp.value.trim() : undefined;
+  const saldo = temDesconto ? (c.subtotal - descontoDigitado - c.totalPago) : c.saldo;
+  if(saldo <= 0){ toast("Nada a pagar"); return; }
+  registrarPagamento(comandaId, [{ forma, valor: Number(saldo.toFixed(2)) }], temDesconto ? descontoDigitado : undefined, observacao);
+  pagamentoStaged = [];
+  dividirPagamentoAberto = false;
+};
+window.onAdicionarPagamentoDividido = () => {
+  const formaSel = document.getElementById("pg-forma-split");
+  const valorInp = document.getElementById("pg-valor-split");
+  const valor = parseFloat((valorInp.value||"").replace(",","."));
+  if(!valor || valor <= 0){ toast("Informe um valor válido"); return; }
+  pagamentoStaged.push({ forma: formaSel.value, valor });
+  valorInp.value = "";
+  renderDetailSheet();
+};
+window.onRemoverPagamentoStaged = (idx) => {
+  pagamentoStaged.splice(idx, 1);
+  renderDetailSheet();
+};
+window.toggleDividirPagamento = () => {
+  dividirPagamentoAberto = !dividirPagamentoAberto;
+  if(!dividirPagamentoAberto) pagamentoStaged = [];
+  renderDetailSheet();
+};
+window.onConfirmarPagamentoDividido = (comandaId) => {
+  if(!pagamentoStaged.length){ toast("Adicione ao menos uma forma de pagamento"); return; }
+  const descontoInp = document.getElementById("pg-desconto");
+  const descontoDigitado = descontoInp ? parseFloat((descontoInp.value||"").replace(",",".")) : NaN;
+  const temDesconto = !isNaN(descontoDigitado);
+  const obsInp = document.getElementById("pg-observacao");
+  const observacao = obsInp && obsInp.value.trim() ? obsInp.value.trim() : undefined;
+  registrarPagamento(comandaId, pagamentoStaged, temDesconto ? descontoDigitado : undefined, observacao);
+  pagamentoStaged = [];
+  dividirPagamentoAberto = false;
+};
+window.onSalvarDescontoObservacao = (comandaId) => {
+  const descontoInp = document.getElementById("pg-desconto");
+  const descontoDigitado = descontoInp ? parseFloat((descontoInp.value||"").replace(",",".")) : NaN;
+  const temDesconto = !isNaN(descontoDigitado);
+  const obsInp = document.getElementById("pg-observacao");
+  const observacao = obsInp ? obsInp.value.trim() : "";
+  if(!temDesconto && !observacao){ toast("Nada pra salvar"); return; }
+  registrarPagamento(comandaId, [], temDesconto ? descontoDigitado : undefined, observacao || undefined);
+};
 window.reabrirComanda = reabrirComanda;
 window.excluirComanda = excluirComanda;
 window.addProdutoItem = addProdutoItem;
@@ -1722,6 +1916,8 @@ window.onSalvarEdicaoProduto = (produtoId) => {
   editarProduto(produtoId, nome, preco, categoria, isNaN(minimo) ? null : minimo);
 };
 window.excluirCliente = excluirCliente;
+window.abrirHistoricoCliente = (clienteId) => { clienteHistoricoId = clienteId; renderHistoricoClienteSheet(); };
+window.fecharHistoricoCliente = () => { clienteHistoricoId = null; renderHistoricoClienteSheet(); };
 window.onCadastrarCliente = () => {
   const nome = document.getElementById("cli-nome");
   const whatsapp = document.getElementById("cli-whatsapp");
