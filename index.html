@@ -155,6 +155,10 @@ let entradasEstoque = [];
 let pagamentoStaged = []; // linhas de pagamento dividido, montadas antes de confirmar
 let dividirPagamentoAberto = false;
 let clienteHistoricoId = null; // cliente com o painel de histórico aberto
+let unificarComandaId = null; // comanda aberta cujo overlay "unificar com outra" está aberto
+let separarModoAtivo = false; // modo de seleção de itens pra separar, dentro do detalhe
+let itensSelecionadosSeparar = [];
+let separarClienteSelecionadoId = null;
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -245,7 +249,8 @@ async function criarComandaComItens(nome, celular, clienteIdSelecionado, itensPa
   // lança todos os itens junto, numa transação só. Evita duas comandas
   // duplicadas se dois funcionários abrirem pro mesmo cliente ao mesmo tempo.
   const { data, error } = await sb.rpc("criar_comanda_com_itens", {
-    p_nome: nome, p_celular: celular, p_cliente_id: clienteIdSelecionado || null, p_itens: itensPayload
+    p_nome: nome, p_celular: celular, p_cliente_id: clienteIdSelecionado || null, p_itens: itensPayload,
+    p_token: sessaoAtual ? sessaoAtual.token : null
   });
   if(error){ toast(error.message || "Erro ao criar comanda"); console.error(error); return; }
 
@@ -272,8 +277,8 @@ async function cadastrarCliente(nome, celular){
     const confirmar = confirm(`Esse WhatsApp já está cadastrado como "${existente.nome}". Deseja atualizar o nome para "${nome}"?`);
     if(!confirmar) return;
   }
-  const { error } = await sb.from("clientes").upsert({ nome, celular }, { onConflict: "celular" });
-  if(error){ toast("Erro ao cadastrar cliente"); console.error(error); return; }
+  const { error } = await sb.rpc("registrar_cliente", { p_nome: nome, p_celular: celular, p_token: sessaoAtual ? sessaoAtual.token : null });
+  if(error){ toast(error.message || "Erro ao cadastrar cliente"); console.error(error); return; }
   toast("Cliente cadastrado");
   await loadAll();
 }
@@ -429,6 +434,31 @@ async function reabrirComanda(comandaId){
   const { error } = await sb.rpc("reabrir_comanda", { p_comanda_id: comandaId });
   if(error){ toast(error.message || "Erro ao reabrir"); console.error(error); return; }
   toast("Comanda reaberta");
+  await loadAll();
+}
+
+async function mesclarComandas(origemId, destinoId){
+  const { error } = await sb.rpc("mesclar_comandas", {
+    p_comanda_origem_id: origemId, p_comanda_destino_id: destinoId,
+    p_token: sessaoAtual ? sessaoAtual.token : null
+  });
+  if(error){ toast(error.message || "Erro ao unificar comandas"); console.error(error); return; }
+  toast("Comandas unificadas");
+  unificarComandaId = null;
+  openComandaId = destinoId;
+  await loadAll();
+}
+
+async function separarItensComanda(origemId, itensIds, nome, celular, clienteId){
+  const { data, error } = await sb.rpc("separar_itens_comanda", {
+    p_comanda_origem_id: origemId, p_itens_ids: itensIds, p_nome: nome, p_celular: celular,
+    p_cliente_id: clienteId || null, p_token: sessaoAtual ? sessaoAtual.token : null
+  });
+  if(error){ toast(error.message || "Erro ao separar itens"); console.error(error); return; }
+  toast("Itens separados em uma nova comanda");
+  separarModoAtivo = false;
+  itensSelecionadosSeparar = [];
+  openComandaId = data;
   await loadAll();
 }
 
@@ -668,10 +698,13 @@ function render(){
   renderDetailSheet();
   renderNovaComandaSheet();
   renderHistoricoClienteSheet();
+  renderUnificarSheet();
 }
 
 // ---------- Admin: Caixa / Vendas / Excluídas ----------
 window.setAdminSubTab = (s) => { adminSubTab = s; render(); };
+window.carregarAuditoria = carregarAuditoria;
+window.onFiltrarAuditoria = (e) => { auditoriaFiltroEntidade = e; render(); };
 window.onMudarPeriodoComparacao = (v) => { periodoComparacao = parseInt(v, 10); render(); };
 
 function renderAdmin(){
@@ -681,14 +714,58 @@ function renderAdmin(){
       <button class="btn ${adminSubTab==='caixa'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('caixa')">Caixa</button>
       <button class="btn ${adminSubTab==='vendas'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('vendas')">Vendas</button>
       <button class="btn ${adminSubTab==='excluidas'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('excluidas')">Excluídas</button>
+      <button class="btn ${adminSubTab==='auditoria'?'btn-accent':'btn-ghost'}" style="flex:1;padding:11px 4px;font-size:13px;" onclick="setAdminSubTab('auditoria')">Auditoria</button>
     </div>
   `;
   if(adminSubTab === "resumo") html += renderResumoSection();
   else if(adminSubTab === "caixa") html += renderCaixaSection();
   else if(adminSubTab === "vendas") html += renderVendasSection();
+  else if(adminSubTab === "auditoria") html += renderAuditoriaSection();
   else html += renderExcluidasSection();
   app.innerHTML = html;
   if(adminSubTab === "vendas") desenharGraficos();
+  if(adminSubTab === "auditoria" && !auditoriaCarregada) carregarAuditoria();
+}
+
+let auditoriaEventos = [];
+let auditoriaCarregada = false;
+let auditoriaFiltroEntidade = "todos";
+
+async function carregarAuditoria(){
+  const { data, error } = await sb.from("auditoria").select("*").order("criado_em", { ascending: false }).limit(200);
+  if(error){ console.error(error); toast("Erro ao carregar auditoria"); return; }
+  auditoriaEventos = data || [];
+  auditoriaCarregada = true;
+  render();
+}
+
+const LABEL_ACAO_AUDITORIA = {
+  criada: "🧾 Comanda criada", paga: "✅ Comanda paga", fiado: "📒 Virou fiado",
+  pagamento: "💰 Pagamento", desconto_aplicado: "🏷️ Desconto aplicado", excluida: "🗑️ Comanda excluída",
+  mesclada: "🔗 Comanda unificada", separada: "✂️ Comanda separada",
+  cadastrado: "➕ Cadastrado", editado: "✏️ Editado", excluido: "🗑️ Excluído",
+  entrada: "📦 Entrada de estoque", ajuste: "⚖️ Ajuste de estoque",
+};
+
+function renderAuditoriaSection(){
+  const entidades = ["todos", "comanda", "produto", "cliente", "estoque"];
+  const eventos = auditoriaFiltroEntidade === "todos" ? auditoriaEventos : auditoriaEventos.filter(e => e.entidade === auditoriaFiltroEntidade);
+  return `
+    <div class="row" style="gap:4px;margin-bottom:10px;flex-wrap:wrap;">
+      ${entidades.map(e => `<button class="btn ${auditoriaFiltroEntidade===e?'btn-accent':'btn-ghost'}" style="padding:6px 10px;font-size:12px;" onclick="onFiltrarAuditoria('${e}')">${e[0].toUpperCase()+e.slice(1)}</button>`).join("")}
+      <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="carregarAuditoria()">🔄 Atualizar</button>
+    </div>
+    ${eventos.length === 0 ? `<div class="empty">Nenhum evento registrado ainda.</div>` : eventos.map(e => `
+      <div class="card paper-card" style="padding:10px 14px;">
+        <div class="row">
+          <div><strong>${LABEL_ACAO_AUDITORIA[e.acao] || e.acao}</strong>
+            <div class="muted" style="font-size:12px;">${fmtDate(e.criado_em)} · ${escapeHtml(e.usuario || "-")}</div>
+          </div>
+        </div>
+        ${e.detalhes ? `<div class="muted" style="font-size:12px;margin-top:4px;">${escapeHtml(JSON.stringify(e.detalhes))}</div>` : ""}
+      </div>
+    `).join("")}
+  `;
 }
 
 function somaFaturamentoPeriodo(inicio, fim){
@@ -1633,13 +1710,17 @@ function renderDetailSheet(){
   const c = comandas.find(x => x.id === openComandaId);
   if(!c) return;
 
+  const modoSeparar = separarModoAtivo && c.status === "aberta";
   const itensHtml = c.itens.length
     ? c.itens.map(i => `
         <div class="item-row">
-          <span>${escapeHtml(i.descricao)} <span class="muted" style="font-size:11px;">${fmtDate(i.criado_em)}</span></span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${modoSeparar ? `<input type="checkbox" ${itensSelecionadosSeparar.includes(i.id) ? "checked" : ""} onchange="onToggleItemSeparar('${i.id}')" />` : ""}
+            ${escapeHtml(i.descricao)} <span class="muted" style="font-size:11px;">${fmtDate(i.criado_em)}</span>
+          </span>
           <span style="display:flex;align-items:center;gap:10px;">
             ${fmt(i.valor)}
-            ${c.status === "aberta" ? `<button class="x" onclick="removeItem('${i.id}')">&times;</button>` : ""}
+            ${c.status === "aberta" && !modoSeparar ? `<button class="x" onclick="removeItem('${i.id}')">&times;</button>` : ""}
           </span>
         </div>`).join("")
     : `<div class="muted" style="padding:10px 0;">Nenhum item lançado ainda.</div>`;
@@ -1674,7 +1755,23 @@ function renderDetailSheet(){
   })() : "";
 
   let actionsHtml = "";
-  if(c.status === "aberta"){
+  if(c.status === "aberta" && modoSeparar){
+    const qtd = itensSelecionadosSeparar.length;
+    actionsHtml = `
+      <div class="muted" style="margin:10px 0 4px;">Marque os itens acima que vão pra uma comanda nova, e informe o cliente:</div>
+      <div class="form-row">
+        <input id="sep-nome" placeholder="Nome do cliente" autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <input id="sep-celular" placeholder="WhatsApp" inputmode="tel" />
+      </div>
+      <div id="sep-sugestoes"></div>
+      <div class="form-row" style="margin-top:8px;">
+        <button class="btn btn-accent" style="flex:1;" ${qtd ? "" : "disabled"} onclick="onConfirmarSepararItens('${c.id}')">Separar ${qtd || ""} ${qtd===1?"item":"itens"}</button>
+        <button class="btn btn-ghost" onclick="toggleSepararModo()">Cancelar</button>
+      </div>
+    `;
+  } else if(c.status === "aberta"){
     actionsHtml = `
       ${produtosHtml}
       <div class="muted" style="margin:10px 0 4px;">Outro item (avulso)</div>
@@ -1704,6 +1801,10 @@ function renderDetailSheet(){
       </div>
       ${renderBlocoPagamento(c)}
       <button class="btn btn-warn" style="width:100%;margin-top:8px;" onclick="marcarFiado('${c.id}')">Fechar como Fiado (sem pagar agora)</button>
+      <div class="form-row" style="margin-top:8px;">
+        <button class="btn btn-ghost" onclick="toggleUnificarComanda('${c.id}')">🔗 Unificar</button>
+        ${c.itens.length > 1 ? `<button class="btn btn-ghost" onclick="toggleSepararModo()">✂️ Separar itens</button>` : ""}
+      </div>
     `;
   } else if(c.status === "fiado"){
     const clienteFiado = clientes.find(cl => cl.id === c.cliente_id);
@@ -1746,6 +1847,51 @@ function renderDetailSheet(){
     descInp.addEventListener("keydown", e => { if(e.key === "Enter") document.getElementById("item-valor").focus(); });
     document.getElementById("item-valor").addEventListener("keydown", e => { if(e.key === "Enter") onAddItem(c.id); });
   }
+  const sepNomeInp = document.getElementById("sep-nome");
+  if(sepNomeInp){
+    sepNomeInp.addEventListener("input", () => {
+      separarClienteSelecionadoId = null;
+      const termo = sepNomeInp.value.trim().toLowerCase();
+      const sugg = document.getElementById("sep-sugestoes");
+      if(!sugg) return;
+      if(!termo){ sugg.innerHTML = ""; return; }
+      const encontrados = clientes.filter(cl => cl.nome.toLowerCase().includes(termo)).slice(0, 5);
+      sugg.innerHTML = encontrados.map(cl => `
+        <div class="item-row" style="cursor:pointer;" onclick="onSelecionarClienteSeparar('${cl.id}')">
+          <span>${escapeHtml(cl.nome)} <span class="muted">${escapeHtml(cl.celular)}</span></span>
+        </div>`).join("");
+    });
+  }
+}
+
+function renderUnificarSheet(){
+  let existing = document.getElementById("unificar-overlay");
+  if(existing) existing.remove();
+  if(!unificarComandaId) return;
+  const origem = comandas.find(x => x.id === unificarComandaId);
+  if(!origem) return;
+  const outrasAbertas = comandas.filter(c => c.status === "aberta" && c.id !== unificarComandaId);
+
+  const listaHtml = outrasAbertas.length ? outrasAbertas.map(c => `
+    <div class="item-row" style="cursor:pointer;" onclick="mesclarComandas('${unificarComandaId}','${c.id}')">
+      <span>${escapeHtml(c.nome)} <span class="muted">${c.itens.length} ${c.itens.length===1?"item":"itens"}</span></span>
+      <strong>${fmt(c.total)}</strong>
+    </div>
+  `).join("") : `<div class="muted" style="padding:10px 0;">Nenhuma outra comanda aberta pra unificar.</div>`;
+
+  const html = `
+    <div class="overlay" id="unificar-overlay" onclick="if(event.target===this) toggleUnificarComanda(null)">
+      <div class="sheet">
+        <div class="row">
+          <h2>Unificar "${escapeHtml(origem.nome)}" com...</h2>
+          <button class="x" onclick="toggleUnificarComanda(null)">&times;</button>
+        </div>
+        <div class="muted" style="margin-bottom:10px;">Toque na comanda que vai <strong>receber</strong> os itens desta.</div>
+        <div class="card" style="padding:8px 12px;">${listaHtml}</div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML("beforeend", html);
 }
 
 function escapeHtml(s){
@@ -1812,8 +1958,16 @@ window.onAddItem = (comandaId) => {
   desc.value = ""; valor.value = "";
   desc.focus();
 };
-window.openDetail = (id) => { openComandaId = id; pagamentoStaged = []; dividirPagamentoAberto = false; renderDetailSheet(); };
-window.closeDetail = () => { openComandaId = null; pagamentoStaged = []; dividirPagamentoAberto = false; renderDetailSheet(); };
+window.openDetail = (id) => {
+  openComandaId = id; pagamentoStaged = []; dividirPagamentoAberto = false;
+  separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
+  renderDetailSheet();
+};
+window.closeDetail = () => {
+  openComandaId = null; pagamentoStaged = []; dividirPagamentoAberto = false;
+  separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
+  renderDetailSheet();
+};
 window.removeItem = removeItem;
 window.marcarFiado = marcarFiado;
 window.quitarFiado = quitarFiado;
@@ -1871,6 +2025,33 @@ window.onSalvarDescontoObservacao = (comandaId) => {
 };
 window.reabrirComanda = reabrirComanda;
 window.excluirComanda = excluirComanda;
+window.mesclarComandas = mesclarComandas;
+window.toggleUnificarComanda = (comandaId) => { unificarComandaId = comandaId; renderUnificarSheet(); };
+window.toggleSepararModo = () => {
+  separarModoAtivo = !separarModoAtivo;
+  itensSelecionadosSeparar = [];
+  separarClienteSelecionadoId = null;
+  renderDetailSheet();
+};
+window.onToggleItemSeparar = (itemId) => {
+  const idx = itensSelecionadosSeparar.indexOf(itemId);
+  if(idx === -1) itensSelecionadosSeparar.push(itemId); else itensSelecionadosSeparar.splice(idx, 1);
+  renderDetailSheet();
+};
+window.onSelecionarClienteSeparar = (clienteId) => {
+  const cli = clientes.find(c => c.id === clienteId);
+  if(!cli) return;
+  separarClienteSelecionadoId = cli.id;
+  document.getElementById("sep-nome").value = cli.nome;
+  document.getElementById("sep-celular").value = cli.celular;
+  document.getElementById("sep-sugestoes").innerHTML = "";
+};
+window.onConfirmarSepararItens = (comandaId) => {
+  const nome = document.getElementById("sep-nome").value;
+  const celular = document.getElementById("sep-celular").value;
+  if(!itensSelecionadosSeparar.length){ toast("Selecione ao menos um item"); return; }
+  separarItensComanda(comandaId, itensSelecionadosSeparar, nome, celular, separarClienteSelecionadoId);
+};
 window.addProdutoItem = addProdutoItem;
 window.ajustarEstoque = ajustarEstoque;
 window.excluirProduto = excluirProduto;

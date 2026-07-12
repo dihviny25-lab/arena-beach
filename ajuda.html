@@ -62,6 +62,7 @@
     <a href="#caixa-fisico">Caixa físico (admin)</a>
     <a href="#vendas">Painel de vendas (admin)</a>
     <a href="#historico">Histórico (admin)</a>
+    <a href="#auditoria">Auditoria (admin)</a>
     <a href="#voz">Comando de voz</a>
     <a href="#duvidas">Dúvidas comuns</a>
   </div>
@@ -119,6 +120,10 @@
       <li><strong>Observação:</strong> campo de texto livre pra anotar algo sobre a comanda (fica salvo e visível sempre que reabrir o detalhe).</li>
     </ul>
     <p>Todo pagamento já registrado (mesmo parcial) aparece listado no detalhe da comanda, com data/hora, forma e valor.</p>
+    <h3>Unificar duas comandas</h3>
+    <p>Se abriu duas comandas por engano pra mesma mesa/pessoa, no detalhe de uma comanda aberta toque em <strong>"🔗 Unificar"</strong> e escolha a outra comanda aberta que vai <em>receber</em> os itens. Todos os itens passam pra ela, e a comanda de origem fica marcada como unificada (some das abas normais, mas o histórico continua guardado).</p>
+    <h3>Separar itens de uma comanda</h3>
+    <p>Se a comanda tem itens de pessoas diferentes e cada um vai pagar a sua parte, toque em <strong>"✂️ Separar itens"</strong> (só aparece se a comanda tiver 2 ou mais itens), marque quais itens vão pra uma comanda nova, informe o cliente (com a mesma busca de cadastro existente) e confirme. Os itens marcados saem da comanda original e viram uma comanda nova, separada.</p>
     <div class="aviso"><strong>Só admin</strong> pode excluir uma comanda, e precisa digitar o motivo. A comanda não é apagada de verdade — ela fica guardada na aba Admin → Excluídas, com motivo, data e quem excluiu. Se a comanda excluída tinha produtos com desconto de estoque, o estoque volta automaticamente.</div>
     <div class="aviso">Reabrir uma comanda paga ou fiado <strong>desfaz o fechamento por completo</strong> — apaga os pagamentos e o desconto que tinham sido lançados, pra você fechar de novo do jeito certo, sem misturar com o pagamento antigo.</div>
   </section>
@@ -184,7 +189,13 @@
 
   <section id="historico">
     <h2>📅 Histórico — aba admin</h2>
-    <p>Mostra todas as comandas já fechadas, agrupadas por dia. Cada dia tem um resumo no topo com o <strong>total geral</strong> e o total <strong>separado por forma de pagamento</strong> (dinheiro, pix, cartão, fiado quitado).</p>
+    <p>Mostra todas as comandas já fechadas, agrupadas por dia. Cada dia tem um resumo no topo com o <strong>total geral</strong> e o total <strong>separado por forma de pagamento</strong> (dinheiro, pix, cartão) — já considerando pagamento dividido entre formas diferentes.</p>
+  </section>
+
+  <section id="auditoria">
+    <h2>🔍 Auditoria — aba Admin → Auditoria</h2>
+    <p>Registro automático de tudo que acontece no sistema: comanda criada, paga, virou fiado, pagamento registrado, desconto aplicado, comanda excluída/unificada/separada, produto cadastrado/editado/excluído, entrada e ajuste de estoque, cliente cadastrado/editado. Cada evento mostra <strong>quem fez</strong> e <strong>quando</strong>.</p>
+    <p>Dá pra filtrar por tipo (Comanda, Produto, Cliente, Estoque) e atualizar a lista a qualquer momento com o botão "🔄 Atualizar".</p>
   </section>
 
   <section id="voz">

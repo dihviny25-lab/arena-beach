@@ -386,6 +386,122 @@ async function testeCaixaEntradaEstoque(browser){
   // limparDadosDeTeste() apaga o produto de teste, o que arrasta a entrada junto (FK on delete cascade).
 }
 
+async function testeUnificarSepararAuditoria(browser){
+  const page = await browser.newPage();
+  const erros = [];
+  page.on('pageerror', e => erros.push(e.message));
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // Cadastro de cliente pela aba Clientes (agora via RPC registrar_cliente, auditado)
+  await page.click('button[data-tab="clientes"]');
+  await page.waitForTimeout(500);
+  await page.fill('#cli-nome', `${PREFIXO}clienteReg`);
+  await page.fill('#cli-whatsapp', '11922223333');
+  await page.click('button:has-text("Add")');
+  await page.waitForFunction((p) => clientes.some(c => c.nome === p + 'clienteReg'), PREFIXO, { timeout: 15000 });
+  ok('Cliente cadastrado via RPC registrar_cliente', true);
+
+  // Cria duas comandas abertas pra unificar
+  await page.click('button[data-tab="abertas"]');
+  await page.waitForTimeout(500);
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}unifA`);
+  await page.fill('#nc-celular', '11966661111');
+  await page.fill('#nc-item-desc', 'Item A'); await page.fill('#nc-item-valor', '10');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+  await page.click('#detail-overlay button.x');
+  await page.waitForTimeout(500);
+
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}unifB`);
+  await page.fill('#nc-celular', '11966662222');
+  await page.fill('#nc-item-desc', 'Item B'); await page.fill('#nc-item-valor', '20');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  // Detalhe da comanda B está aberto: unifica com A
+  await page.click('button[onclick="toggleUnificarComanda(\'' + (await (async()=>{
+    const { data: cliB } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifB`).single();
+    const { data: comandaB } = await sb.from('comandas').select('id').eq('cliente_id', cliB.id).single();
+    return comandaB.id;
+  })()) + '\')"]');
+  await page.waitForTimeout(500);
+  const overlayVisivel = await page.isVisible('#unificar-overlay').catch(()=>false);
+  ok('Overlay de unificar comandas abre', overlayVisivel);
+  if(overlayVisivel){
+    await page.click(`#unificar-overlay .item-row:has-text("${PREFIXO}unifA")`);
+    await page.waitForTimeout(1500);
+  }
+
+  const { data: cliA } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifA`).single();
+  const { data: comandaA } = await sb.from('comandas').select('*').eq('cliente_id', cliA.id).single();
+  const { data: itensA } = await sb.from('itens').select('*').eq('comanda_id', comandaA.id);
+  ok('Comanda A recebeu os itens da B (2 itens)', itensA.length === 2, JSON.stringify(itensA));
+
+  const { data: cliB } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifB`).single();
+  const { data: comandaB } = await sb.from('comandas').select('*').eq('cliente_id', cliB.id).single();
+  ok('Comanda B virou "mesclada" apontando pra A', comandaB.status === 'mesclada' && comandaB.mesclada_com === comandaA.id, JSON.stringify(comandaB));
+
+  // Separar 1 dos 2 itens de A pra uma comanda nova
+  await page.click('#detail-overlay button.x');
+  await page.waitForTimeout(500);
+  await page.click('button[data-tab="abertas"]');
+  await page.waitForTimeout(800);
+  const textoAbertas = await page.textContent('#app');
+  ok('Comanda mesclada (B) NÃO aparece mais em Abertas', !textoAbertas.includes(`${PREFIXO}unifB`));
+
+  await page.click(`.card.paper-card:has-text("${PREFIXO}unifA")`);
+  await page.waitForTimeout(500);
+  const temBotaoSeparar = await page.isVisible('button:has-text("✂️ Separar itens")').catch(()=>false);
+  ok('Botão "Separar itens" aparece (comanda tem 2+ itens)', temBotaoSeparar);
+  if(temBotaoSeparar){
+    await page.click('button:has-text("✂️ Separar itens")');
+    await page.waitForTimeout(500);
+    await page.locator('#detail-overlay input[type="checkbox"]').first().click();
+    await page.waitForTimeout(300);
+    await page.fill('#sep-nome', `${PREFIXO}separado`);
+    await page.fill('#sep-celular', '11944445555');
+    await page.waitForTimeout(300);
+    await page.click('button[onclick^="onConfirmarSepararItens"]');
+    await page.waitForTimeout(1500);
+  }
+
+  const { data: cliSep } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}separado`).single();
+  const { data: comandaSep } = await sb.from('comandas').select('*').eq('cliente_id', cliSep.id).single();
+  const { data: itensSep } = await sb.from('itens').select('*').eq('comanda_id', comandaSep.id);
+  ok('Comanda separada criada com 1 item', itensSep.length === 1, JSON.stringify(itensSep));
+  const { data: itensRestantesA } = await sb.from('itens').select('*').eq('comanda_id', comandaA.id);
+  ok('Comanda A ficou com o item restante', itensRestantesA.length === 1, JSON.stringify(itensRestantesA));
+
+  // Aba Auditoria (admin) mostra os eventos
+  await page.click('#detail-overlay button.x').catch(()=>{});
+  await page.waitForTimeout(500);
+  await page.click('button[data-tab="admin"]');
+  await page.waitForTimeout(500);
+  await page.click('button:has-text("Auditoria")');
+  await page.waitForTimeout(1500);
+  const textoAuditoria = await page.textContent('#app');
+  ok('Aba Auditoria mostra os eventos de unificar/separar', textoAuditoria.includes('unificada') && textoAuditoria.includes('separada'), textoAuditoria.slice(0,150));
+
+  ok('Sem erros de JS no fluxo de unificar/separar/auditoria', erros.length === 0, erros.join(' | '));
+  await page.close();
+
+  const pageCaixa = await browser.newPage();
+  await login(pageCaixa, CAIXA_USER, CAIXA_PASS);
+  const abasCaixa = await pageCaixa.$$eval('#nav-tabs button', els => els.map(e => e.textContent.trim()));
+  ok('Caixa não vê aba Admin (logo não vê Auditoria)', !abasCaixa.includes('Admin'), abasCaixa.join(', '));
+  await pageCaixa.close();
+}
+
 async function testeEstoqueAdmin(browser){
   const page = await browser.newPage();
   const erros = [];
@@ -447,6 +563,13 @@ async function testeAdminDashboard(browser){
   const browser = await chromium.launch();
   console.log(`\n=== Rodando contra ${SITE_URL} ===\n`);
 
+  // Se qualquer teste lançar uma exceção não tratada (timeout, elemento não
+  // encontrado etc.), o finally garante que a limpeza final ainda rode —
+  // senão dados de teste ficam presos no banco (ex: um "_regressao_clienteReg"
+  // com um número de celular reservado) e quebram a PRÓXIMA execução, porque
+  // agora o cadastro de cliente avisa sobre conflito de WhatsApp em vez de
+  // sobrescrever silenciosamente.
+  try {
   console.log('--- Login e papéis ---');
   await testeLoginEPapeis(browser);
 
@@ -474,10 +597,16 @@ async function testeAdminDashboard(browser){
   console.log('\n--- Caixa: entrada de estoque (sem ver/alterar quantidade) ---');
   await testeCaixaEntradaEstoque(browser);
 
-  await browser.close();
-
-  console.log(`\n=== Limpando dados de teste ===`);
-  await limparDadosDeTeste();
+  console.log('\n--- Unificar/separar comandas e auditoria ---');
+  await testeUnificarSepararAuditoria(browser);
+  } catch (erroFatal) {
+    console.log(`\n❌ Suíte interrompida por erro não tratado: ${erroFatal.message}`);
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    console.log(`\n=== Limpando dados de teste ===`);
+    await limparDadosDeTeste();
+  }
 
   const falhas = resultados.filter(r => !r.passou);
   console.log(`\n=== RESULTADO: ${resultados.length - falhas.length}/${resultados.length} passaram ===`);
