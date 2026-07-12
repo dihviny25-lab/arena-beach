@@ -197,17 +197,19 @@ async function loadAll(){
     ? { id: ativo.id, valor: ativo.value, selStart: ativo.selectionStart, selEnd: ativo.selectionEnd }
     : null;
 
-  const { data: cmds, error: e1 } = await sb.from("comandas").select("*").order("criada_em",{ascending:false});
+  if(!sessaoAtual) return;
+  const tk = sessaoAtual.token;
+  const { data: cmds, error: e1 } = await sb.rpc("obter_comandas", { p_token: tk });
   if(e1){ console.error(e1); toast("Erro ao carregar comandas"); return; }
-  const { data: itens, error: e2 } = await sb.from("itens").select("*").order("criado_em",{ascending:true});
+  const { data: itens, error: e2 } = await sb.rpc("obter_itens", { p_token: tk });
   if(e2){ console.error(e2); toast("Erro ao carregar itens"); return; }
-  const { data: prods, error: e3 } = await sb.from("produtos").select("*").order("nome",{ascending:true});
+  const { data: prods, error: e3 } = await sb.rpc("obter_produtos", { p_token: tk });
   if(e3){ console.error(e3); toast("Erro ao carregar produtos"); return; }
-  const { data: clis, error: e4 } = await sb.from("clientes").select("*").order("nome",{ascending:true});
+  const { data: clis, error: e4 } = await sb.rpc("obter_clientes", { p_token: tk });
   if(e4){ console.error(e4); toast("Erro ao carregar clientes"); return; }
-  const { data: pags, error: e7 } = await sb.from("pagamentos").select("*").order("criado_em",{ascending:true});
+  const { data: pags, error: e7 } = await sb.rpc("obter_pagamentos", { p_token: tk });
   if(e7){ console.error(e7); toast("Erro ao carregar pagamentos"); return; }
-  const { data: creds, error: e8 } = await sb.from("creditos_cliente").select("*").order("criado_em",{ascending:true});
+  const { data: creds, error: e8 } = await sb.rpc("obter_creditos_cliente", { p_token: tk });
   if(e8){ console.error(e8); toast("Erro ao carregar créditos"); return; }
   comandas = cmds.map(c => {
     const its = itens.filter(i => i.comanda_id === c.id);
@@ -767,7 +769,7 @@ let auditoriaCarregada = false;
 let auditoriaFiltroEntidade = "todos";
 
 async function carregarAuditoria(){
-  const { data, error } = await sb.from("auditoria").select("*").order("criado_em", { ascending: false }).limit(200);
+  const { data, error } = await sb.rpc("obter_auditoria", { p_token: sessaoAtual ? sessaoAtual.token : null });
   if(error){ console.error(error); toast("Erro ao carregar auditoria"); return; }
   auditoriaEventos = data || [];
   auditoriaCarregada = true;
@@ -2078,8 +2080,9 @@ window.closeDetail = () => {
 window.toggleLinhaDoTempo = async (comandaId) => {
   linhaDoTempoAberta = !linhaDoTempoAberta;
   if(linhaDoTempoAberta){
-    const { data, error } = await sb.from("auditoria").select("*")
-      .eq("entidade", "comanda").eq("entidade_id", comandaId).order("criado_em", { ascending: true });
+    const { data, error } = await sb.rpc("obter_auditoria_comanda", {
+      p_comanda_id: comandaId, p_token: sessaoAtual ? sessaoAtual.token : null
+    });
     if(error){ toast("Erro ao carregar linha do tempo"); console.error(error); linhaDoTempoAberta = false; return; }
     linhaDoTempoEventos = data || [];
   }
@@ -2285,12 +2288,10 @@ function startApp(){
   renderNav();
   if(!realtimeStarted){
     realtimeStarted = true;
-    sb.channel("comandas-sync")
-      .on("postgres_changes", { event: "*", schema: "public", table: "comandas" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "itens" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "produtos" }, loadAll)
-      .on("postgres_changes", { event: "*", schema: "public", table: "clientes" }, loadAll)
-      .subscribe();
+    // A sincronização entre celulares deixou de usar Realtime/postgres_changes
+    // (que exige leitura aberta por RLS, o que expunha dados de cliente sem
+    // login) — agora é feita por atualização periódica em vez de instantânea.
+    setInterval(() => { if(sessaoAtual) loadAll(); }, 15000);
   }
   loadAll();
 }
