@@ -619,6 +619,90 @@ async function testeEstornoPagamentoEReabrir(browser){
   await page.close();
 }
 
+async function testeSaldoDeCredito(browser){
+  const page = await browser.newPage();
+  const erros = [];
+  page.on('pageerror', e => erros.push(e.message));
+  page.on('dialog', async d => { await d.accept(); });
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // Comanda 1: total 87, paga 100 em dinheiro sem troco -> sobra de 13 vira crédito
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}creditoCliente`);
+  await page.fill('#nc-celular', '11966665555');
+  await page.fill('#nc-item-desc', 'Item'); await page.fill('#nc-item-valor', '87');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  await page.click('button[onclick="toggleDividirPagamento()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'dinheiro');
+  await page.fill('#pg-valor-split', '100');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  await page.check('#pg-sem-troco');
+  await page.waitForTimeout(200);
+  const comandaId1 = await page.evaluate(() => openComandaId);
+  await page.click(`button[onclick="onConfirmarPagamentoDividido('${comandaId1}')"]`);
+  await page.waitForTimeout(1500);
+
+  const { data: comanda1 } = await sb.from('comandas').select('status').eq('id', comandaId1).single();
+  ok('Comanda fecha paga mesmo pagando mais que o total, com "sem troco" marcado', comanda1.status === 'paga', JSON.stringify(comanda1));
+
+  let cli1 = null;
+  for(let tentativa = 0; tentativa < 5 && !cli1; tentativa++){
+    const { data } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}creditoCliente`).maybeSingle();
+    if(data) cli1 = data; else await new Promise(r => setTimeout(r, 500));
+  }
+  if(!cli1){ ok('Gera crédito de R$13 (a sobra) pro cliente', false, 'cliente de teste não encontrado após criar comanda 1'); return; }
+  const { data: creditos1 } = await sb.from('creditos_cliente').select('*').eq('cliente_id', cli1.id);
+  ok('Gera crédito de R$13 (a sobra) pro cliente', creditos1.length === 1 && Number(creditos1[0].valor) === 13 && creditos1[0].tipo === 'gerado', JSON.stringify(creditos1));
+
+  await page.click('button[data-tab="clientes"]');
+  await page.waitForTimeout(500);
+  const textoClientes = await page.textContent('#app');
+  ok('Aba Clientes mostra o crédito disponível (R$13,00)', textoClientes.includes('13,00'));
+
+  // Comanda 2: total 20, usa o crédito de 13, resto (7) em pix
+  await page.click('button[data-tab="abertas"]');
+  await page.waitForTimeout(500);
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}creditoCli`);
+  await page.waitForTimeout(600);
+  const sugg = await page.textContent('#nc-sugestoes');
+  if(sugg.includes(`${PREFIXO}creditoCliente`)) await page.click('#nc-sugestoes .item-row');
+  await page.waitForTimeout(300);
+  await page.fill('#nc-item-desc', 'Item2'); await page.fill('#nc-item-valor', '20');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  const temBotaoCredito = await page.isVisible('button:has-text("Usar crédito")').catch(()=>false);
+  ok('Botão "Usar crédito" aparece na comanda 2 (cliente tem saldo)', temBotaoCredito);
+  if(temBotaoCredito) await page.click('button:has-text("Usar crédito")');
+  await page.waitForTimeout(1500);
+
+  const { data: creditos2 } = await sb.from('creditos_cliente').select('*').eq('cliente_id', cli1.id).order('criado_em');
+  ok('Uso do crédito fica registrado (usado R$13, nada apagado)', creditos2.length === 2 && creditos2.some(c => c.tipo === 'usado' && Number(c.valor) === 13), JSON.stringify(creditos2));
+
+  const btnsPix = await page.$$('button[onclick*="onPagarTudo"][onclick*="\'pix\'"]');
+  if(btnsPix.length) await btnsPix[0].click();
+  await page.waitForTimeout(1500);
+
+  const { data: comanda2Final } = await sb.from('comandas').select('*').eq('nome', `${PREFIXO}creditoCliente`).order('criada_em', {ascending:false}).limit(1).single();
+  ok('Comanda 2 fecha paga depois de usar crédito + pix do restante', comanda2Final.status === 'paga', JSON.stringify(comanda2Final));
+
+  ok('Sem erros de JS no fluxo de saldo de crédito', erros.length === 0, erros.join(' | '));
+  await page.close();
+}
+
 async function testeEstoqueAdmin(browser){
   const page = await browser.newPage();
   const erros = [];
@@ -722,6 +806,9 @@ async function testeAdminDashboard(browser){
 
   console.log('\n--- Estorno de pagamento e reabrir comanda (sem apagar histórico) ---');
   await testeEstornoPagamentoEReabrir(browser);
+
+  console.log('\n--- Saldo de crédito (sobra de troco) ---');
+  await testeSaldoDeCredito(browser);
   } catch (erroFatal) {
     console.log(`\n❌ Suíte interrompida por erro não tratado: ${erroFatal.message}`);
     process.exitCode = 1;

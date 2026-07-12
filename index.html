@@ -161,6 +161,15 @@ let itensSelecionadosSeparar = [];
 let separarClienteSelecionadoId = null;
 let linhaDoTempoAberta = false;
 let linhaDoTempoEventos = [];
+let creditosCliente = [];
+let sobraViraCreditoAtivo = false;
+
+function saldoCreditoCliente(clienteId){
+  if(!clienteId) return 0;
+  return creditosCliente
+    .filter(cr => cr.cliente_id === clienteId)
+    .reduce((s,cr) => s + (cr.tipo === "gerado" ? Number(cr.valor) : -Number(cr.valor)), 0);
+}
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -198,6 +207,8 @@ async function loadAll(){
   if(e4){ console.error(e4); toast("Erro ao carregar clientes"); return; }
   const { data: pags, error: e7 } = await sb.from("pagamentos").select("*").order("criado_em",{ascending:true});
   if(e7){ console.error(e7); toast("Erro ao carregar pagamentos"); return; }
+  const { data: creds, error: e8 } = await sb.from("creditos_cliente").select("*").order("criado_em",{ascending:true});
+  if(e8){ console.error(e8); toast("Erro ao carregar créditos"); return; }
   comandas = cmds.map(c => {
     const its = itens.filter(i => i.comanda_id === c.id);
     const subtotal = its.reduce((s,i)=>s+Number(i.valor),0);
@@ -210,6 +221,7 @@ async function loadAll(){
   });
   produtos = prods;
   clientes = clis;
+  creditosCliente = creds;
 
   if(sessaoAtual && sessaoAtual.role === "admin"){
     const { data: turnosData, error: e5 } = await sb.rpc("admin_obter_turnos", { p_token: sessaoAtual.token });
@@ -289,7 +301,11 @@ async function cadastrarCliente(nome, celular){
 async function excluirCliente(clienteId){
   const cli = clientes.find(x => x.id === clienteId);
   if(!cli) return;
-  if(!confirm(`Excluir o cliente "${cli.nome}"?`)) return;
+  const credito = saldoCreditoCliente(clienteId);
+  const aviso = credito > 0.01
+    ? `Excluir o cliente "${cli.nome}"? Ele tem ${fmt(credito)} de crédito — isso vai se perder.`
+    : `Excluir o cliente "${cli.nome}"?`;
+  if(!confirm(aviso)) return;
   const { error } = await sb.from("clientes").delete().eq("id", clienteId);
   if(error){ toast("Erro ao excluir cliente"); console.error(error); return; }
   toast("Cliente excluído");
@@ -398,13 +414,15 @@ async function editarProduto(produtoId, nome, preco, categoria, minimo){
   await loadAll();
 }
 
-async function registrarPagamento(comandaId, pagamentos, desconto, observacao){
+async function registrarPagamento(comandaId, pagamentos, desconto, observacao, usarCredito, permitirCreditoSobra){
   const { data, error } = await sb.rpc("registrar_pagamento_comanda", {
     p_comanda_id: comandaId,
     p_pagamentos: pagamentos || [],
     p_desconto: desconto === undefined ? null : desconto,
     p_observacao: observacao === undefined ? null : observacao,
-    p_token: sessaoAtual ? sessaoAtual.token : null
+    p_token: sessaoAtual ? sessaoAtual.token : null,
+    p_usar_credito: usarCredito === undefined ? null : usarCredito,
+    p_permitir_credito_sobra: !!permitirCreditoSobra
   });
   if(error){ toast(error.message || "Erro ao registrar pagamento"); console.error(error); return; }
   const r = data && data[0];
@@ -1266,11 +1284,12 @@ function renderClientes(){
       const mensagem = totalDevendo > 0
         ? `Oi ${cli.nome}! Aqui é do Arena Araçá 🍺 Passando pra lembrar que está pendente ${fmt(totalDevendo)} em aberto. Quando puder, dá uma passadinha pra acertar 🙂`
         : `Oi ${cli.nome}! Aqui é do Arena Araçá 🍺`;
+      const credito = saldoCreditoCliente(cli.id);
       return `
       <div class="card paper-card">
         <div class="row">
           <div><strong>${escapeHtml(cli.nome)}</strong> ${badge}
-            <div class="muted">${escapeHtml(cli.celular)}${totalDevendo > 0 ? ` · deve ${fmt(totalDevendo)}` : ""}</div>
+            <div class="muted">${escapeHtml(cli.celular)}${totalDevendo > 0 ? ` · deve ${fmt(totalDevendo)}` : ""}${credito > 0.01 ? ` · 💳 crédito ${fmt(credito)}` : ""}</div>
           </div>
         </div>
         <div class="foot-actions">
@@ -1662,6 +1681,7 @@ const LABEL_EVENTO_TIMELINE = {
   paga: "✅ Comanda paga", fiado: "📒 Virou fiado", excluida: "🗑️ Comanda excluída",
   mesclada: "🔗 Unificada com outra comanda", separada: "✂️ Itens separados pra outra comanda",
   pagamento_estornado: "↩️ Pagamento estornado", comanda_reaberta: "🔓 Comanda reaberta",
+  credito_gerado: "💳 Crédito gerado (sobra de troco)", credito_usado: "💳 Crédito usado no pagamento",
 };
 
 function formatDetalheEventoTimeline(e){
@@ -1678,6 +1698,7 @@ function formatDetalheEventoTimeline(e){
   if(e.acao === "mesclada") return `com "${escapeHtml(d.destino_nome||"")}" (${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"})`;
   if(e.acao === "separada") return `${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"} de "${escapeHtml(d.origem_nome||"")}"`;
   if(e.acao === "excluida") return `motivo: ${escapeHtml(d.motivo||"-")}`;
+  if(e.acao === "credito_gerado" || e.acao === "credito_usado") return fmt(d.valor||0);
   return "";
 }
 
@@ -1716,6 +1737,13 @@ function renderListaPagamentos(c){
 
 function renderBlocoPagamento(c){
   const pagamentosHtml = renderListaPagamentos(c);
+  const creditoDisponivel = saldoCreditoCliente(c.cliente_id);
+  const creditoHtml = creditoDisponivel > 0.01 ? `
+    <div class="aviso" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <span>💳 Cliente tem <strong>${fmt(creditoDisponivel)}</strong> de crédito disponível</span>
+      <button class="btn btn-accent" style="padding:6px 10px;font-size:12px;white-space:nowrap;" onclick="onUsarCreditoCliente('${c.id}')">Usar crédito</button>
+    </div>
+  ` : "";
 
   const descontoInput = c.status === "aberta" ? `
     <div class="form-row">
@@ -1740,6 +1768,7 @@ function renderBlocoPagamento(c){
       <span class="total" style="color:var(--warn)">${fmt(c.saldo)}</span>
     </div>
     ${pagamentosHtml}
+    ${creditoHtml}
     ${descontoInput}
     <div class="form-row">
       <input id="pg-observacao" placeholder="Observação (opcional)" value="${escapeHtml(c.observacao || '')}" />
@@ -1762,6 +1791,10 @@ function renderBlocoPagamento(c){
           <input id="pg-valor-split" placeholder="Valor" inputmode="decimal" style="max-width:100px;" />
           <button class="btn btn-ghost" onclick="onAdicionarPagamentoDividido()">+</button>
         </div>
+        <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px;margin-top:6px;">
+          <input type="checkbox" id="pg-sem-troco" ${sobraViraCreditoAtivo ? "checked" : ""} onchange="onToggleSemTroco()" />
+          Sem troco? Deixar a sobra como crédito do cliente
+        </label>
         <button class="btn btn-accent" style="width:100%;margin-top:6px;" ${pagamentoStaged.length ? "" : "disabled"} onclick="onConfirmarPagamentoDividido('${c.id}')">Confirmar pagamento dividido</button>
       </div>
     ` : ""}
@@ -2033,13 +2066,13 @@ window.onAddItem = (comandaId) => {
 window.openDetail = (id) => {
   openComandaId = id; pagamentoStaged = []; dividirPagamentoAberto = false;
   separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
-  linhaDoTempoAberta = false; linhaDoTempoEventos = [];
+  linhaDoTempoAberta = false; linhaDoTempoEventos = []; sobraViraCreditoAtivo = false;
   renderDetailSheet();
 };
 window.closeDetail = () => {
   openComandaId = null; pagamentoStaged = []; dividirPagamentoAberto = false;
   separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
-  linhaDoTempoAberta = false; linhaDoTempoEventos = [];
+  linhaDoTempoAberta = false; linhaDoTempoEventos = []; sobraViraCreditoAtivo = false;
   renderDetailSheet();
 };
 window.toggleLinhaDoTempo = async (comandaId) => {
@@ -2094,9 +2127,21 @@ window.onConfirmarPagamentoDividido = (comandaId) => {
   const temDesconto = !isNaN(descontoDigitado);
   const obsInp = document.getElementById("pg-observacao");
   const observacao = obsInp && obsInp.value.trim() ? obsInp.value.trim() : undefined;
-  registrarPagamento(comandaId, pagamentoStaged, temDesconto ? descontoDigitado : undefined, observacao);
+  registrarPagamento(comandaId, pagamentoStaged, temDesconto ? descontoDigitado : undefined, observacao, undefined, sobraViraCreditoAtivo);
   pagamentoStaged = [];
   dividirPagamentoAberto = false;
+  sobraViraCreditoAtivo = false;
+};
+window.onToggleSemTroco = () => {
+  sobraViraCreditoAtivo = !sobraViraCreditoAtivo;
+};
+window.onUsarCreditoCliente = (comandaId) => {
+  const c = comandas.find(x => x.id === comandaId);
+  if(!c) return;
+  const disponivel = saldoCreditoCliente(c.cliente_id);
+  const aUsar = Math.min(disponivel, c.saldo);
+  if(aUsar <= 0){ toast("Nada a usar"); return; }
+  registrarPagamento(comandaId, [], undefined, undefined, aUsar);
 };
 window.onSalvarDescontoObservacao = (comandaId) => {
   const descontoInp = document.getElementById("pg-desconto");
