@@ -539,6 +539,86 @@ async function testeLinhaDoTempoComanda(browser){
   await page.close();
 }
 
+async function testeEstornoPagamentoEReabrir(browser){
+  const page = await browser.newPage();
+  const erros = [];
+  page.on('pageerror', e => erros.push(e.message));
+  page.on('dialog', async d => { await d.accept(); });
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}estorno`);
+  await page.fill('#nc-celular', '11955512345');
+  await page.fill('#nc-item-desc', 'Item'); await page.fill('#nc-item-valor', '100');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  // Paga dividido: pix 50 (certo) + cartao 50 (errado, devia ser fiado)
+  await page.click('button[onclick="toggleDividirPagamento()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'pix');
+  await page.fill('#pg-valor-split', '50');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  await page.selectOption('#pg-forma-split', 'cartao');
+  await page.fill('#pg-valor-split', '50');
+  await page.click('button[onclick="onAdicionarPagamentoDividido()"]');
+  await page.waitForTimeout(300);
+  const comandaIdAtual = await page.evaluate(() => openComandaId);
+  await page.click(`button[onclick="onConfirmarPagamentoDividido('${comandaIdAtual}')"]`);
+  await page.waitForTimeout(1500);
+
+  const { data: comandaPaga } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  ok('Comanda ficou paga com os 2 pagamentos', comandaPaga.status === 'paga', JSON.stringify(comandaPaga));
+
+  // Comanda paga fecha o detalhe sozinha; reabre a tela (não a comanda) pra estornar o pagamento errado
+  await page.click('button[data-tab="historico"]');
+  await page.waitForTimeout(500);
+  await page.click(`.card.paper-card:has-text("${PREFIXO}estorno")`);
+  await page.waitForTimeout(500);
+  await page.waitForSelector('button:has-text("↩️ Estornar")');
+  const linhaCartao = page.locator('.item-row', { hasText: 'Cartão' }).first();
+  await linhaCartao.locator('button:has-text("↩️ Estornar")').click();
+  await page.waitForTimeout(1500);
+
+  const { data: comandaFiado } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  ok('Estornar o pagamento errado volta a comanda pra fiado (sem reabrir tudo)', comandaFiado.status === 'fiado', JSON.stringify(comandaFiado));
+
+  const { data: pagamentosBanco } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaIdAtual);
+  ok('Os 2 pagamentos continuam no banco (estorno não apaga nada)', pagamentosBanco.length === 2, JSON.stringify(pagamentosBanco));
+  const pixRow = pagamentosBanco.find(p => p.forma === 'pix');
+  const cartaoRow = pagamentosBanco.find(p => p.forma === 'cartao');
+  ok('O pagamento correto (pix) continua válido', pixRow && !pixRow.estornado_em);
+  ok('O pagamento estornado (cartão) fica marcado, não apagado', cartaoRow && !!cartaoRow.estornado_em);
+
+  // Quita o restante corretamente e confirma que fecha
+  await page.click(`button[onclick="onPagarTudo('${comandaIdAtual}','dinheiro')"]`);
+  await page.waitForTimeout(1500);
+  const { data: comandaFinal } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  ok('Comanda fecha certo depois do estorno + pagamento correto', comandaFinal.status === 'paga', JSON.stringify(comandaFinal));
+
+  // Testa reabrir_comanda: estorna TODOS os pagamentos válidos sem apagar nenhum
+  await page.click('button[data-tab="historico"]');
+  await page.waitForTimeout(500);
+  await page.click(`.card.paper-card:has-text("${PREFIXO}estorno")`);
+  await page.waitForTimeout(500);
+  await page.click(`button[onclick="reabrirComanda('${comandaIdAtual}')"]`);
+  await page.waitForTimeout(1500);
+  const { data: comandaReaberta } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  ok('Reabrir comanda volta pra aberta', comandaReaberta.status === 'aberta', JSON.stringify(comandaReaberta));
+  const { data: pagamentosAposReabrir } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaIdAtual);
+  const naoEstornados = pagamentosAposReabrir.filter(p => !p.estornado_em);
+  ok('Reabrir estorna todos os pagamentos válidos restantes (nenhum é apagado do banco)',
+    pagamentosAposReabrir.length === 3 && naoEstornados.length === 0, JSON.stringify(pagamentosAposReabrir));
+
+  ok('Sem erros de JS no fluxo de estorno/reabrir', erros.length === 0, erros.join(' | '));
+  await page.close();
+}
+
 async function testeEstoqueAdmin(browser){
   const page = await browser.newPage();
   const erros = [];
@@ -639,6 +719,9 @@ async function testeAdminDashboard(browser){
 
   console.log('\n--- Linha do tempo da comanda (item adicionado/removido) ---');
   await testeLinhaDoTempoComanda(browser);
+
+  console.log('\n--- Estorno de pagamento e reabrir comanda (sem apagar histórico) ---');
+  await testeEstornoPagamentoEReabrir(browser);
   } catch (erroFatal) {
     console.log(`\n❌ Suíte interrompida por erro não tratado: ${erroFatal.message}`);
     process.exitCode = 1;

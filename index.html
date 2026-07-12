@@ -203,9 +203,10 @@ async function loadAll(){
     const subtotal = its.reduce((s,i)=>s+Number(i.valor),0);
     const total = subtotal - Number(c.desconto || 0);
     const pagamentosComanda = pags.filter(p => p.comanda_id === c.id);
-    const totalPago = pagamentosComanda.reduce((s,p)=>s+Number(p.valor),0);
+    const pagamentosValidos = pagamentosComanda.filter(p => !p.estornado_em);
+    const totalPago = pagamentosValidos.reduce((s,p)=>s+Number(p.valor),0);
     const saldo = total - totalPago;
-    return {...c, itens: its, subtotal, total, pagamentos: pagamentosComanda, totalPago, saldo};
+    return {...c, itens: its, subtotal, total, pagamentos: pagamentosValidos, pagamentosEstornados: pagamentosComanda.filter(p => p.estornado_em), totalPago, saldo};
   });
   produtos = prods;
   clientes = clis;
@@ -435,12 +436,20 @@ async function quitarFiado(comandaId, forma, valor){
 }
 
 async function reabrirComanda(comandaId){
-  // Reabrir desfaz o fechamento por completo: apaga os pagamentos e o desconto
-  // registrados, senão fechar de novo bateria de frente com o pagamento antigo
+  // Reabrir desfaz o fechamento por completo: estorna os pagamentos e zera o
+  // desconto, senão fechar de novo bateria de frente com o pagamento antigo
   // (a comanda pareceria já paga antes mesmo de lançar o novo pagamento).
-  const { error } = await sb.rpc("reabrir_comanda", { p_comanda_id: comandaId });
+  // Estornar (não apagar) preserva o registro pra conferência de caixa depois.
+  const { error } = await sb.rpc("reabrir_comanda", { p_comanda_id: comandaId, p_token: sessaoAtual ? sessaoAtual.token : null });
   if(error){ toast(error.message || "Erro ao reabrir"); console.error(error); return; }
   toast("Comanda reaberta");
+  await loadAll();
+}
+
+async function estornarPagamento(pagamentoId){
+  const { error } = await sb.rpc("estornar_pagamento", { p_pagamento_id: pagamentoId, p_token: sessaoAtual ? sessaoAtual.token : null });
+  if(error){ toast(error.message || "Erro ao estornar pagamento"); console.error(error); return; }
+  toast("Pagamento estornado");
   await loadAll();
 }
 
@@ -1652,6 +1661,7 @@ const LABEL_EVENTO_TIMELINE = {
   desconto_aplicado: "🏷️ Desconto aplicado", pagamento: "💰 Pagamento",
   paga: "✅ Comanda paga", fiado: "📒 Virou fiado", excluida: "🗑️ Comanda excluída",
   mesclada: "🔗 Unificada com outra comanda", separada: "✂️ Itens separados pra outra comanda",
+  pagamento_estornado: "↩️ Pagamento estornado", comanda_reaberta: "🔓 Comanda reaberta",
 };
 
 function formatDetalheEventoTimeline(e){
@@ -1662,6 +1672,8 @@ function formatDetalheEventoTimeline(e){
   }
   if(e.acao === "item_removido") return `${escapeHtml(d.descricao||"")} (${fmt(d.valor||0)})`;
   if(e.acao === "pagamento") return `${LABEL_PAGAMENTO[d.forma]||d.forma||""} · ${fmt(d.valor||0)}`;
+  if(e.acao === "pagamento_estornado") return `${LABEL_PAGAMENTO[d.forma]||d.forma||""} · ${fmt(d.valor||0)}`;
+  if(e.acao === "comanda_reaberta") return d.pagamentos_estornados > 0 ? `${d.pagamentos_estornados} pagamento(s) estornado(s), total ${fmt(d.total_estornado||0)}` : "sem pagamentos a estornar";
   if(e.acao === "desconto_aplicado") return fmt(d.desconto||0);
   if(e.acao === "mesclada") return `com "${escapeHtml(d.destino_nome||"")}" (${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"})`;
   if(e.acao === "separada") return `${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"} de "${escapeHtml(d.origem_nome||"")}"`;
@@ -1685,17 +1697,25 @@ function renderLinhaDoTempo(c){
   `;
 }
 
-function renderBlocoPagamento(c){
-  const pagamentosHtml = c.pagamentos.length ? `
+function renderListaPagamentos(c){
+  if(!c.pagamentos.length) return "";
+  return `
     <div class="card" style="padding:8px 12px;margin:8px 0;">
       ${c.pagamentos.map(p => `
         <div class="item-row">
           <span>${LABEL_PAGAMENTO[p.forma] || p.forma} <span class="muted" style="font-size:11px;">${fmtDate(p.criado_em)}</span></span>
-          <span>${fmt(p.valor)}</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${fmt(p.valor)}
+            <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px;" onclick="onEstornarPagamento('${p.id}')" title="Corrige forma/valor errado sem desfazer a comanda inteira">↩️ Estornar</button>
+          </span>
         </div>
       `).join("")}
     </div>
-  ` : "";
+  `;
+}
+
+function renderBlocoPagamento(c){
+  const pagamentosHtml = renderListaPagamentos(c);
 
   const descontoInput = c.status === "aberta" ? `
     <div class="form-row">
@@ -1858,6 +1878,11 @@ function renderDetailSheet(){
     actionsHtml = `
       ${clienteFiado ? `<div class="foot-actions"><a class="btn btn-accent" style="text-align:center;text-decoration:none;" target="_blank" rel="noopener" href="${linkWhatsapp(clienteFiado.celular, mensagemFiado)}">📱 Mensagem</a></div>` : ""}
       ${renderBlocoPagamento(c)}
+    `;
+  } else if(c.status === "paga"){
+    actionsHtml = `
+      ${renderListaPagamentos(c)}
+      <button class="btn btn-ghost" style="width:100%" onclick="reabrirComanda('${c.id}')">Reabrir comanda</button>
     `;
   } else {
     actionsHtml = `<button class="btn btn-ghost" style="width:100%" onclick="reabrirComanda('${c.id}')">Reabrir comanda</button>`;
@@ -2083,6 +2108,10 @@ window.onSalvarDescontoObservacao = (comandaId) => {
   registrarPagamento(comandaId, [], temDesconto ? descontoDigitado : undefined, observacao || undefined);
 };
 window.reabrirComanda = reabrirComanda;
+window.onEstornarPagamento = (pagamentoId) => {
+  if(!confirm("Estornar esse pagamento? A comanda volta a dever esse valor.")) return;
+  estornarPagamento(pagamentoId);
+};
 window.excluirComanda = excluirComanda;
 window.mesclarComandas = mesclarComandas;
 window.toggleUnificarComanda = (comandaId) => { unificarComandaId = comandaId; renderUnificarSheet(); };
