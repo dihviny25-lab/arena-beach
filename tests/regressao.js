@@ -27,26 +27,44 @@ function ok(nome, condicao, detalhe){
   console.log(`${condicao ? '✅' : '❌'} ${nome}${detalhe ? ' — ' + detalhe : ''}`);
 }
 
+// A leitura das tabelas (comandas/itens/produtos/clientes/pagamentos/
+// creditos_cliente/auditoria) agora exige sessão válida — não dá mais pra
+// fazer sb.from(x).select() direto pela chave anônima, igual o app também não
+// faz mais. A suíte usa uma sessão admin própria (separada da sessão que o
+// navegador cria em cada teste) só pra essas leituras de verificação.
+let tokenSuite = null;
+async function obterTokenSuite(){
+  if(!tokenSuite){
+    const { data } = await sb.rpc('criar_sessao', { p_usuario: ADMIN_USER, p_senha: ADMIN_PASS });
+    tokenSuite = data[0].token;
+  }
+  return tokenSuite;
+}
+async function todasComandas(){ const { data, error } = await sb.rpc('obter_comandas', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function todosItens(){ const { data, error } = await sb.rpc('obter_itens', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function todosProdutos(){ const { data, error } = await sb.rpc('obter_produtos', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function todosClientes(){ const { data, error } = await sb.rpc('obter_clientes', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function todosPagamentos(){ const { data, error } = await sb.rpc('obter_pagamentos', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function todosCreditos(){ const { data, error } = await sb.rpc('obter_creditos_cliente', { p_token: await obterTokenSuite() }); if(error) throw error; return data || []; }
+async function comandaPorId(id){ return (await todasComandas()).find(c => c.id === id) || null; }
+async function clientePorNome(nome){ return (await todosClientes()).find(c => c.nome === nome) || null; }
+
 async function limparDadosDeTeste(){
   // comandas e produtos não têm policy de DELETE direta (só via RPC admin_*, de
   // propósito — ninguém apaga comanda/produto direto pela API). Um .delete() direto
   // nessas tabelas é um no-op silencioso da RLS: por muito tempo isso deixou comandas
   // de teste 'aberta' órfãs no banco, que acabavam batendo no índice único de nome
   // (idx_comandas_nome_aberta) em runs futuros. Por isso usamos as RPCs admin_* aqui.
-  const { data: sessaoAdmin } = await sb.rpc('criar_sessao', { p_usuario: ADMIN_USER, p_senha: ADMIN_PASS });
-  const tokenAdmin = sessaoAdmin && sessaoAdmin[0] && sessaoAdmin[0].token;
-  if(tokenAdmin){
-    const { data: comandasTeste } = await sb.from('comandas').select('id,status').ilike('nome', `${PREFIXO}%`);
-    for(const c of (comandasTeste || [])){
-      if(c.status !== 'excluida'){
-        await sb.rpc('admin_excluir_comanda', { p_token: tokenAdmin, p_comanda_id: c.id, p_motivo: 'limpeza automática de dados de teste' });
-      }
+  const tokenAdmin = await obterTokenSuite();
+  const comandasTeste = (await todasComandas()).filter(c => c.nome && c.nome.startsWith(PREFIXO));
+  for(const c of comandasTeste){
+    if(c.status !== 'excluida'){
+      await sb.rpc('admin_excluir_comanda', { p_token: tokenAdmin, p_comanda_id: c.id, p_motivo: 'limpeza automática de dados de teste' });
     }
-    const { data: produtosTeste } = await sb.from('produtos').select('id').ilike('nome', `${PREFIXO}%`);
-    for(const p of (produtosTeste || [])){
-      await sb.rpc('admin_excluir_produto', { p_token: tokenAdmin, p_produto_id: p.id });
-    }
-    await sb.rpc('encerrar_sessao', { p_token: tokenAdmin });
+  }
+  const produtosTeste = (await todosProdutos()).filter(p => p.nome && p.nome.startsWith(PREFIXO));
+  for(const p of produtosTeste){
+    await sb.rpc('admin_excluir_produto', { p_token: tokenAdmin, p_produto_id: p.id });
   }
   await sb.from('clientes').delete().ilike('nome', `${PREFIXO}%`);
 }
@@ -127,10 +145,12 @@ async function testeNovaComandaEAcumuloFiado(browser){
   await page.click('text=Criar comanda');
   await page.waitForTimeout(2000);
 
-  const { data: cliRow } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}cliente`).single();
-  const { data: comandasCliente } = await sb.from('comandas').select('id,status,cliente_id,itens:itens(*)')
-    .eq('cliente_id', cliRow.id);
-  ok('Criou exatamente 1 comanda pro cliente', (comandasCliente || []).length === 1, `encontradas: ${(comandasCliente||[]).length}`);
+  const cliRow = await clientePorNome(`${PREFIXO}cliente`);
+  // Filtra 'excluida' porque comandas nunca são apagadas de verdade (soft-delete) e
+  // clientes com histórico de teste de execuções anteriores podem carregar comandas
+  // excluídas — o teste quer saber quantas comandas ATIVAS existem, não o total histórico.
+  let comandasCliente = (await todasComandas()).filter(c => c.cliente_id === cliRow.id && c.status !== 'excluida');
+  ok('Criou exatamente 1 comanda pro cliente', comandasCliente.length === 1, `encontradas: ${comandasCliente.length}`);
 
   if(comandasCliente && comandasCliente.length === 1){
     // Criar comanda já abre o detalhe dela automaticamente (fluxo intencional);
@@ -161,9 +181,9 @@ async function testeNovaComandaEAcumuloFiado(browser){
     await page.click('text=Criar comanda');
     await page.waitForTimeout(2000);
 
-    const { data: comandasDepois } = await sb.from('comandas').select('id,status').eq('cliente_id', cliRow.id);
-    ok('Reabrir pro mesmo cliente NÃO duplica (continua com 1 comanda)', (comandasDepois || []).length === 1, `encontradas: ${(comandasDepois||[]).length}`);
-    ok('Comanda reaproveitada volta pro status aberta (fiado reaberto)', comandasDepois && comandasDepois[0] && comandasDepois[0].status === 'aberta', JSON.stringify(comandasDepois));
+    const comandasDepois = (await todasComandas()).filter(c => c.cliente_id === cliRow.id && c.status !== 'excluida');
+    ok('Reabrir pro mesmo cliente NÃO duplica (continua com 1 comanda)', comandasDepois.length === 1, `encontradas: ${comandasDepois.length}`);
+    ok('Comanda reaproveitada volta pro status aberta (fiado reaberto)', comandasDepois[0] && comandasDepois[0].status === 'aberta', JSON.stringify(comandasDepois));
   }
 
   ok('Sem erros de JS no fluxo de nova comanda/fiado', erros.length === 0, erros.join(' | '));
@@ -171,21 +191,34 @@ async function testeNovaComandaEAcumuloFiado(browser){
 }
 
 async function testeConcorrenciaAbrirComanda(){
-  const { data: cli } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}cliente`).single();
+  const cli = await clientePorNome(`${PREFIXO}cliente`);
   if(!cli){ ok('Teste de concorrência (pré-condição)', false, 'cliente de teste não encontrado'); return; }
+  const tokenConcorrencia = await obterTokenSuite();
   const itensPayload = [{ descricao: 'Item concorrência', valor: 5 }];
   const [r1, r2] = await Promise.all([
-    sb.rpc('criar_comanda_com_itens', { p_nome: `${PREFIXO}cliente`, p_celular: '11988887777', p_cliente_id: cli.id, p_itens: itensPayload }),
-    sb.rpc('criar_comanda_com_itens', { p_nome: `${PREFIXO}cliente`, p_celular: '11988887777', p_cliente_id: cli.id, p_itens: itensPayload }),
+    sb.rpc('criar_comanda_com_itens', { p_nome: `${PREFIXO}cliente`, p_celular: '11988887777', p_cliente_id: cli.id, p_itens: itensPayload, p_token: tokenConcorrencia }),
+    sb.rpc('criar_comanda_com_itens', { p_nome: `${PREFIXO}cliente`, p_celular: '11988887777', p_cliente_id: cli.id, p_itens: itensPayload, p_token: tokenConcorrencia }),
   ]);
   const idsIguais = r1.data && r2.data && r1.data[0].comanda_id === r2.data[0].comanda_id;
   ok('Duas chamadas concorrentes pro mesmo cliente retornam a mesma comanda', idsIguais, JSON.stringify({ r1: r1.data, r2: r2.data }));
 }
 
 async function testeQuitarFiadoComFormaPagamento(browser){
-  const { data: cliTeste } = await sb.from('clientes').insert({ nome: `${PREFIXO}clientefiado`, celular: '11955556666' }).select().single();
-  const { data: comandaTeste } = await sb.from('comandas').insert({ nome: `${PREFIXO}clientefiado`, status: 'fiado', cliente_id: cliTeste.id }).select().single();
-  await sb.from('itens').insert({ comanda_id: comandaTeste.id, descricao: 'Item teste fiado', valor: 15 });
+  // Cria a comanda via RPC (fica 'aberta') e registra um pagamento de R$0 pra
+  // virar 'fiado' — é exatamente o que marcarFiado() faz no app de verdade,
+  // já que comandas/itens não aceitam mais insert direto pela chave anônima.
+  const tokenFixture = await obterTokenSuite();
+  const { data: criada, error: erroCriar } = await sb.rpc('criar_comanda_com_itens', {
+    p_nome: `${PREFIXO}clientefiado`, p_celular: '11955556666', p_cliente_id: null,
+    p_itens: [{ descricao: 'Item teste fiado', valor: 15 }], p_token: tokenFixture
+  });
+  if(erroCriar) throw erroCriar;
+  const comandaTesteId = criada[0].comanda_id;
+  await sb.rpc('registrar_pagamento_comanda', {
+    p_comanda_id: comandaTesteId, p_pagamentos: [], p_desconto: 0, p_observacao: null,
+    p_token: tokenFixture, p_usar_credito: null, p_permitir_credito_sobra: false
+  });
+  const cliTeste = await clientePorNome(`${PREFIXO}clientefiado`);
 
   const page = await browser.newPage();
   const erros = [];
@@ -199,17 +232,16 @@ async function testeQuitarFiadoComFormaPagamento(browser){
   await page.waitForTimeout(1500);
   await page.close();
 
-  const { data: comandaFinal } = await sb.from('comandas').select('*').eq('id', comandaTeste.id).single();
-  const { data: pagamentosFinal } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaTeste.id);
+  const comandaFinal = await comandaPorId(comandaTesteId);
+  const pagamentosFinal = (await todosPagamentos()).filter(p => p.comanda_id === comandaTesteId);
   ok('Quitar fiado fecha a comanda e registra o pagamento com a forma escolhida (pix)',
     comandaFinal.status === 'paga' && pagamentosFinal.length === 1 && pagamentosFinal[0].forma === 'pix' && Number(pagamentosFinal[0].valor) === 15,
     JSON.stringify({ comandaFinal, pagamentosFinal }));
   ok('Sem erros de JS ao quitar fiado', erros.length === 0, erros.join(' | '));
 
-  // comandas não tem DELETE direto (ver limparDadosDeTeste); a limpeza final do
-  // final da suíte (por prefixo, via admin_excluir_comanda) cuida deste registro.
-  await sb.from('itens').delete().eq('comanda_id', comandaTeste.id);
-  await sb.from('clientes').delete().eq('id', cliTeste.id);
+  // comandas/itens não têm DELETE direto (ver limparDadosDeTeste); a limpeza final
+  // do final da suíte (por prefixo, via admin_excluir_comanda) cuida deste registro.
+  if(cliTeste) await sb.from('clientes').delete().eq('id', cliTeste.id);
 }
 
 async function testePagamentoDivididoEParcial(browser){
@@ -232,8 +264,8 @@ async function testePagamentoDivididoEParcial(browser){
   await page.click('text=Criar comanda');
   await page.waitForTimeout(2000);
 
-  const { data: cli1 } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}pagsplit`).single();
-  const { data: comanda1 } = await sb.from('comandas').select('id').eq('cliente_id', cli1.id).single();
+  const cli1 = await clientePorNome(`${PREFIXO}pagsplit`);
+  const comanda1 = (await todasComandas()).find(c => c.cliente_id === cli1.id);
 
   await page.click('button[onclick="toggleDividirPagamento()"]');
   await page.waitForTimeout(300);
@@ -248,8 +280,8 @@ async function testePagamentoDivididoEParcial(browser){
   await page.click(`button[onclick="onConfirmarPagamentoDividido('${comanda1.id}')"]`);
   await page.waitForTimeout(1500);
 
-  const { data: comanda1Final } = await sb.from('comandas').select('status').eq('id', comanda1.id).single();
-  const { data: pagamentos1 } = await sb.from('pagamentos').select('forma,valor').eq('comanda_id', comanda1.id);
+  const comanda1Final = await comandaPorId(comanda1.id);
+  const pagamentos1 = (await todosPagamentos()).filter(p => p.comanda_id === comanda1.id);
   ok('Pagamento dividido cobrindo o total fecha a comanda', comanda1Final.status === 'paga', JSON.stringify(comanda1Final));
   ok('Os 2 pagamentos divididos ficam registrados (pix 10 + dinheiro 20)',
     pagamentos1.length === 2 && pagamentos1.some(p=>p.forma==='pix'&&Number(p.valor)===10) && pagamentos1.some(p=>p.forma==='dinheiro'&&Number(p.valor)===20),
@@ -268,8 +300,8 @@ async function testePagamentoDivididoEParcial(browser){
   await page.click('text=Criar comanda');
   await page.waitForTimeout(2000);
 
-  const { data: cli2 } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}pagparcial`).single();
-  const { data: comanda2 } = await sb.from('comandas').select('id').eq('cliente_id', cli2.id).single();
+  const cli2 = await clientePorNome(`${PREFIXO}pagparcial`);
+  const comanda2 = (await todasComandas()).find(c => c.cliente_id === cli2.id);
 
   await page.click('button[onclick="toggleDividirPagamento()"]');
   await page.waitForTimeout(300);
@@ -280,7 +312,7 @@ async function testePagamentoDivididoEParcial(browser){
   await page.click(`button[onclick="onConfirmarPagamentoDividido('${comanda2.id}')"]`);
   await page.waitForTimeout(1500);
 
-  const { data: comanda2Parcial } = await sb.from('comandas').select('status').eq('id', comanda2.id).single();
+  const comanda2Parcial = await comandaPorId(comanda2.id);
   ok('Pagamento parcial (15 de 40) deixa a comanda em fiado', comanda2Parcial.status === 'fiado', JSON.stringify(comanda2Parcial));
 
   await page.click('#detail-overlay button.x');
@@ -293,8 +325,9 @@ async function testePagamentoDivididoEParcial(browser){
   await page.click(`${cardSel2} button:has-text("📱 Pix")`);
   await page.waitForTimeout(1500);
 
-  const { data: comanda2Final } = await sb.from('comandas').select('status').eq('id', comanda2.id).single();
-  const { data: pagamentos2 } = await sb.from('pagamentos').select('forma,valor').eq('comanda_id', comanda2.id).order('criado_em');
+  const comanda2Final = await comandaPorId(comanda2.id);
+  const pagamentos2 = (await todosPagamentos()).filter(p => p.comanda_id === comanda2.id)
+    .sort((a,b) => new Date(a.criado_em) - new Date(b.criado_em));
   ok('Quitar o restante pela aba Fiado fecha a comanda', comanda2Final.status === 'paga', JSON.stringify(comanda2Final));
   ok('Ficam registrados os 2 pagamentos parciais (15 dinheiro + 25 pix)',
     pagamentos2.length === 2 && Number(pagamentos2[0].valor) === 15 && Number(pagamentos2[1].valor) === 25,
@@ -336,8 +369,8 @@ async function testeDuplicidadeCliente(browser){
   await page.waitForTimeout(1500);
   ok('Cadastro com WhatsApp já usado por outro nome pede confirmação', dialogMsg && dialogMsg.includes(`${PREFIXO}dupOriginal`), dialogMsg);
 
-  const { data: cliDepois } = await sb.from('clientes').select('*').eq('celular', celular).single();
-  ok('Cancelar o aviso NÃO sobrescreve o cadastro existente', cliDepois.nome === `${PREFIXO}dupOriginal`, JSON.stringify(cliDepois));
+  const cliDepois = (await todosClientes()).find(c => c.celular === celular);
+  ok('Cancelar o aviso NÃO sobrescreve o cadastro existente', cliDepois && cliDepois.nome === `${PREFIXO}dupOriginal`, JSON.stringify(cliDepois));
 
   ok('Sem erros de JS no fluxo de duplicidade', erros.length === 0, erros.join(' | '));
   await page.close();
@@ -350,7 +383,7 @@ async function testeCaixaEntradaEstoque(browser){
   await sb.rpc('admin_cadastrar_produto', {
     p_token: tokenAdmin, p_nome: `${PREFIXO}produtoentrada`, p_preco: 9, p_estoque: 3, p_minimo: 2, p_categoria: 'Testes', p_tipo: 'produto'
   });
-  const { data: prod } = await sb.from('produtos').select('id').eq('nome', `${PREFIXO}produtoentrada`).single();
+  const prod = (await todosProdutos()).find(p => p.nome === `${PREFIXO}produtoentrada`);
   await sb.rpc('encerrar_sessao', { p_token: tokenAdmin });
 
   const page = await browser.newPage();
@@ -374,7 +407,7 @@ async function testeCaixaEntradaEstoque(browser){
   }
   await page.close();
 
-  const { data: prodDepois } = await sb.from('produtos').select('estoque').eq('id', prod.id).single();
+  const prodDepois = (await todosProdutos()).find(p => p.id === prod.id);
   ok('Estoque foi de 3 para 10 após entrada de 7 registrada pelo caixa', prodDepois.estoque === 10, `estoque atual: ${prodDepois.estoque}`);
 
   const { data: entradasLog } = await sb.rpc('admin_obter_entradas_estoque', { p_token: (await sb.rpc('criar_sessao', { p_usuario: ADMIN_USER, p_senha: ADMIN_PASS })).data[0].token });
@@ -430,9 +463,9 @@ async function testeUnificarSepararAuditoria(browser){
 
   // Detalhe da comanda B está aberto: unifica com A
   await page.click('button[onclick="toggleUnificarComanda(\'' + (await (async()=>{
-    const { data: cliB } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifB`).single();
-    const { data: comandaB } = await sb.from('comandas').select('id').eq('cliente_id', cliB.id).single();
-    return comandaB.id;
+    const cliB0 = await clientePorNome(`${PREFIXO}unifB`);
+    const comandaB0 = (await todasComandas()).find(c => c.cliente_id === cliB0.id);
+    return comandaB0.id;
   })()) + '\')"]');
   await page.waitForTimeout(500);
   const overlayVisivel = await page.isVisible('#unificar-overlay').catch(()=>false);
@@ -442,13 +475,13 @@ async function testeUnificarSepararAuditoria(browser){
     await page.waitForTimeout(1500);
   }
 
-  const { data: cliA } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifA`).single();
-  const { data: comandaA } = await sb.from('comandas').select('*').eq('cliente_id', cliA.id).single();
-  const { data: itensA } = await sb.from('itens').select('*').eq('comanda_id', comandaA.id);
+  const cliA = await clientePorNome(`${PREFIXO}unifA`);
+  const comandaA = (await todasComandas()).find(c => c.cliente_id === cliA.id);
+  const itensA = (await todosItens()).filter(i => i.comanda_id === comandaA.id);
   ok('Comanda A recebeu os itens da B (2 itens)', itensA.length === 2, JSON.stringify(itensA));
 
-  const { data: cliB } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}unifB`).single();
-  const { data: comandaB } = await sb.from('comandas').select('*').eq('cliente_id', cliB.id).single();
+  const cliB = await clientePorNome(`${PREFIXO}unifB`);
+  const comandaB = (await todasComandas()).find(c => c.cliente_id === cliB.id);
   ok('Comanda B virou "mesclada" apontando pra A', comandaB.status === 'mesclada' && comandaB.mesclada_com === comandaA.id, JSON.stringify(comandaB));
 
   // Separar 1 dos 2 itens de A pra uma comanda nova
@@ -475,11 +508,11 @@ async function testeUnificarSepararAuditoria(browser){
     await page.waitForTimeout(1500);
   }
 
-  const { data: cliSep } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}separado`).single();
-  const { data: comandaSep } = await sb.from('comandas').select('*').eq('cliente_id', cliSep.id).single();
-  const { data: itensSep } = await sb.from('itens').select('*').eq('comanda_id', comandaSep.id);
+  const cliSep = await clientePorNome(`${PREFIXO}separado`);
+  const comandaSep = (await todasComandas()).find(c => c.cliente_id === cliSep.id);
+  const itensSep = (await todosItens()).filter(i => i.comanda_id === comandaSep.id);
   ok('Comanda separada criada com 1 item', itensSep.length === 1, JSON.stringify(itensSep));
-  const { data: itensRestantesA } = await sb.from('itens').select('*').eq('comanda_id', comandaA.id);
+  const itensRestantesA = (await todosItens()).filter(i => i.comanda_id === comandaA.id);
   ok('Comanda A ficou com o item restante', itensRestantesA.length === 1, JSON.stringify(itensRestantesA));
 
   // Aba Auditoria (admin) mostra os eventos
@@ -572,7 +605,7 @@ async function testeEstornoPagamentoEReabrir(browser){
   await page.click(`button[onclick="onConfirmarPagamentoDividido('${comandaIdAtual}')"]`);
   await page.waitForTimeout(1500);
 
-  const { data: comandaPaga } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  const comandaPaga = await comandaPorId(comandaIdAtual);
   ok('Comanda ficou paga com os 2 pagamentos', comandaPaga.status === 'paga', JSON.stringify(comandaPaga));
 
   // Comanda paga fecha o detalhe sozinha; reabre a tela (não a comanda) pra estornar o pagamento errado
@@ -585,10 +618,10 @@ async function testeEstornoPagamentoEReabrir(browser){
   await linhaCartao.locator('button:has-text("↩️ Estornar")').click();
   await page.waitForTimeout(1500);
 
-  const { data: comandaFiado } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  const comandaFiado = await comandaPorId(comandaIdAtual);
   ok('Estornar o pagamento errado volta a comanda pra fiado (sem reabrir tudo)', comandaFiado.status === 'fiado', JSON.stringify(comandaFiado));
 
-  const { data: pagamentosBanco } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaIdAtual);
+  const pagamentosBanco = (await todosPagamentos()).filter(p => p.comanda_id === comandaIdAtual);
   ok('Os 2 pagamentos continuam no banco (estorno não apaga nada)', pagamentosBanco.length === 2, JSON.stringify(pagamentosBanco));
   const pixRow = pagamentosBanco.find(p => p.forma === 'pix');
   const cartaoRow = pagamentosBanco.find(p => p.forma === 'cartao');
@@ -598,7 +631,7 @@ async function testeEstornoPagamentoEReabrir(browser){
   // Quita o restante corretamente e confirma que fecha
   await page.click(`button[onclick="onPagarTudo('${comandaIdAtual}','dinheiro')"]`);
   await page.waitForTimeout(1500);
-  const { data: comandaFinal } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  const comandaFinal = await comandaPorId(comandaIdAtual);
   ok('Comanda fecha certo depois do estorno + pagamento correto', comandaFinal.status === 'paga', JSON.stringify(comandaFinal));
 
   // Testa reabrir_comanda: estorna TODOS os pagamentos válidos sem apagar nenhum
@@ -608,9 +641,9 @@ async function testeEstornoPagamentoEReabrir(browser){
   await page.waitForTimeout(500);
   await page.click(`button[onclick="reabrirComanda('${comandaIdAtual}')"]`);
   await page.waitForTimeout(1500);
-  const { data: comandaReaberta } = await sb.from('comandas').select('status').eq('id', comandaIdAtual).single();
+  const comandaReaberta = await comandaPorId(comandaIdAtual);
   ok('Reabrir comanda volta pra aberta', comandaReaberta.status === 'aberta', JSON.stringify(comandaReaberta));
-  const { data: pagamentosAposReabrir } = await sb.from('pagamentos').select('*').eq('comanda_id', comandaIdAtual);
+  const pagamentosAposReabrir = (await todosPagamentos()).filter(p => p.comanda_id === comandaIdAtual);
   const naoEstornados = pagamentosAposReabrir.filter(p => !p.estornado_em);
   ok('Reabrir estorna todos os pagamentos válidos restantes (nenhum é apagado do banco)',
     pagamentosAposReabrir.length === 3 && naoEstornados.length === 0, JSON.stringify(pagamentosAposReabrir));
@@ -650,17 +683,20 @@ async function testeSaldoDeCredito(browser){
   await page.click(`button[onclick="onConfirmarPagamentoDividido('${comandaId1}')"]`);
   await page.waitForTimeout(1500);
 
-  const { data: comanda1 } = await sb.from('comandas').select('status').eq('id', comandaId1).single();
+  const comanda1 = await comandaPorId(comandaId1);
   ok('Comanda fecha paga mesmo pagando mais que o total, com "sem troco" marcado', comanda1.status === 'paga', JSON.stringify(comanda1));
 
   let cli1 = null;
   for(let tentativa = 0; tentativa < 5 && !cli1; tentativa++){
-    const { data } = await sb.from('clientes').select('id').eq('nome', `${PREFIXO}creditoCliente`).maybeSingle();
-    if(data) cli1 = data; else await new Promise(r => setTimeout(r, 500));
+    cli1 = await clientePorNome(`${PREFIXO}creditoCliente`);
+    if(!cli1) await new Promise(r => setTimeout(r, 500));
   }
   if(!cli1){ ok('Gera crédito de R$13 (a sobra) pro cliente', false, 'cliente de teste não encontrado após criar comanda 1'); return; }
-  const { data: creditos1 } = await sb.from('creditos_cliente').select('*').eq('cliente_id', cli1.id);
-  ok('Gera crédito de R$13 (a sobra) pro cliente', creditos1.length === 1 && Number(creditos1[0].valor) === 13 && creditos1[0].tipo === 'gerado', JSON.stringify(creditos1));
+  // Filtra pela comanda desta execução, não pelo total histórico do cliente: como
+  // comandas/clientes de teste nunca são apagados de verdade (soft-delete + FK NO
+  // ACTION), um cliente de teste pode acumular créditos de execuções anteriores.
+  const creditosComanda1 = (await todosCreditos()).filter(c => c.comanda_id === comandaId1);
+  ok('Gera crédito de R$13 (a sobra) pro cliente', creditosComanda1.length === 1 && Number(creditosComanda1[0].valor) === 13 && creditosComanda1[0].tipo === 'gerado', JSON.stringify(creditosComanda1));
 
   await page.click('button[data-tab="clientes"]');
   await page.waitForTimeout(500);
@@ -683,20 +719,25 @@ async function testeSaldoDeCredito(browser){
   await page.click('text=Criar comanda');
   await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
   await page.waitForTimeout(500);
+  const comandaId2 = await page.evaluate(() => openComandaId);
 
   const temBotaoCredito = await page.isVisible('button:has-text("Usar crédito")').catch(()=>false);
   ok('Botão "Usar crédito" aparece na comanda 2 (cliente tem saldo)', temBotaoCredito);
   if(temBotaoCredito) await page.click('button:has-text("Usar crédito")');
   await page.waitForTimeout(1500);
 
-  const { data: creditos2 } = await sb.from('creditos_cliente').select('*').eq('cliente_id', cli1.id).order('criado_em');
+  // "usado" fica com comanda_id da comanda 2 (onde o crédito foi aplicado); filtra
+  // pelas duas comandas desta execução, não pelo histórico todo do cliente (ver
+  // comentário acima sobre clientes de teste nunca serem apagados de verdade).
+  const creditos2 = (await todosCreditos()).filter(c => c.comanda_id === comandaId1 || c.comanda_id === comandaId2)
+    .sort((a,b) => new Date(a.criado_em) - new Date(b.criado_em));
   ok('Uso do crédito fica registrado (usado R$13, nada apagado)', creditos2.length === 2 && creditos2.some(c => c.tipo === 'usado' && Number(c.valor) === 13), JSON.stringify(creditos2));
 
   const btnsPix = await page.$$('button[onclick*="onPagarTudo"][onclick*="\'pix\'"]');
   if(btnsPix.length) await btnsPix[0].click();
   await page.waitForTimeout(1500);
 
-  const { data: comanda2Final } = await sb.from('comandas').select('*').eq('nome', `${PREFIXO}creditoCliente`).order('criada_em', {ascending:false}).limit(1).single();
+  const comanda2Final = await comandaPorId(comandaId2);
   ok('Comanda 2 fecha paga depois de usar crédito + pix do restante', comanda2Final.status === 'paga', JSON.stringify(comanda2Final));
 
   ok('Sem erros de JS no fluxo de saldo de crédito', erros.length === 0, erros.join(' | '));
@@ -816,6 +857,7 @@ async function testeAdminDashboard(browser){
     await browser.close();
     console.log(`\n=== Limpando dados de teste ===`);
     await limparDadosDeTeste();
+    if(tokenSuite){ await sb.rpc('encerrar_sessao', { p_token: tokenSuite }); tokenSuite = null; }
   }
 
   const falhas = resultados.filter(r => !r.passou);
