@@ -502,6 +502,43 @@ async function testeUnificarSepararAuditoria(browser){
   await pageCaixa.close();
 }
 
+async function testeLinhaDoTempoComanda(browser){
+  const page = await browser.newPage();
+  const erros = [];
+  page.on('pageerror', e => erros.push(e.message));
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  await page.click('text=+ Abrir comanda');
+  await page.waitForTimeout(500);
+  await page.fill('#nc-nome', `${PREFIXO}timeline`);
+  await page.fill('#nc-celular', '11977778888');
+  await page.fill('#nc-item-desc', 'Item 1'); await page.fill('#nc-item-valor', '10');
+  await page.click('button[onclick^="onAdicionarAvulsoNovaComanda"]');
+  await page.waitForTimeout(300);
+  await page.click('text=Criar comanda');
+  await page.waitForFunction(() => !novaComandaAberta && !!openComandaId, null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+
+  await page.fill('#item-desc', 'Item 2');
+  await page.fill('#item-valor', '7');
+  await page.click('button[onclick^="onAddItem"]');
+  await page.waitForTimeout(1200);
+
+  const itemRow = page.locator('.item-row', { hasText: 'Item 2' }).first();
+  await itemRow.locator('button.x').click();
+  await page.waitForTimeout(1200);
+
+  await page.click('button:has-text("🕐 Ver linha do tempo desta comanda")');
+  await page.waitForTimeout(1000);
+  const textoTimeline = await page.textContent('#detail-overlay');
+  ok('Linha do tempo mostra o item adicionado (Item 1)', textoTimeline.includes('Item 1'));
+  ok('Linha do tempo mostra o item adicionado e removido (Item 2 aparece 2x)', (textoTimeline.match(/Item 2/g) || []).length >= 2);
+  ok('Linha do tempo mostra o rótulo "Item removido"', textoTimeline.includes('Item removido'));
+
+  ok('Sem erros de JS no fluxo de linha do tempo', erros.length === 0, erros.join(' | '));
+  await page.close();
+}
+
 async function testeEstoqueAdmin(browser){
   const page = await browser.newPage();
   const erros = [];
@@ -599,6 +636,9 @@ async function testeAdminDashboard(browser){
 
   console.log('\n--- Unificar/separar comandas e auditoria ---');
   await testeUnificarSepararAuditoria(browser);
+
+  console.log('\n--- Linha do tempo da comanda (item adicionado/removido) ---');
+  await testeLinhaDoTempoComanda(browser);
   } catch (erroFatal) {
     console.log(`\n❌ Suíte interrompida por erro não tratado: ${erroFatal.message}`);
     process.exitCode = 1;

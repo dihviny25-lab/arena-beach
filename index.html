@@ -159,6 +159,8 @@ let unificarComandaId = null; // comanda aberta cujo overlay "unificar com outra
 let separarModoAtivo = false; // modo de seleção de itens pra separar, dentro do detalhe
 let itensSelecionadosSeparar = [];
 let separarClienteSelecionadoId = null;
+let linhaDoTempoAberta = false;
+let linhaDoTempoEventos = [];
 
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
@@ -316,19 +318,24 @@ async function addItem(comandaId, descricao, valor){
   descricao = descricao.trim();
   valor = parseFloat(String(valor).replace(",","."));
   if(!descricao || isNaN(valor) || valor <= 0){ toast("Preencha descrição e valor"); return; }
-  const { error } = await sb.from("itens").insert({ comanda_id: comandaId, descricao, valor });
-  if(error){ toast("Erro ao adicionar item"); console.error(error); return; }
+  const { error } = await sb.rpc("adicionar_item_avulso", {
+    p_comanda_id: comandaId, p_descricao: descricao, p_valor: valor,
+    p_token: sessaoAtual ? sessaoAtual.token : null
+  });
+  if(error){ toast(error.message || "Erro ao adicionar item"); console.error(error); return; }
   await loadAll();
 }
 
 async function removeItem(itemId){
-  const { error } = await sb.rpc("remover_item_estoque", { p_item_id: itemId });
+  const { error } = await sb.rpc("remover_item_estoque", { p_item_id: itemId, p_token: sessaoAtual ? sessaoAtual.token : null });
   if(error){ toast("Erro ao remover item"); console.error(error); return; }
   await loadAll();
 }
 
 async function addProdutoItem(comandaId, produtoId){
-  const { error } = await sb.rpc("lancar_item_produto", { p_comanda_id: comandaId, p_produto_id: produtoId });
+  const { error } = await sb.rpc("lancar_item_produto", {
+    p_comanda_id: comandaId, p_produto_id: produtoId, p_token: sessaoAtual ? sessaoAtual.token : null
+  });
   if(error){ toast(error.message || "Erro ao lançar produto"); console.error(error); return; }
   await loadAll();
 }
@@ -545,7 +552,8 @@ async function lancarItensEmLote(comandaId, linhas){
     p_comanda_id: comandaId,
     p_itens: itensPayload.map(it => it.produto_id
       ? { produto_id: it.produto_id, quantidade: it.quantidade }
-      : { descricao: it.descricao, valor: it.valor })
+      : { descricao: it.descricao, valor: it.valor }),
+    p_token: sessaoAtual ? sessaoAtual.token : null
   });
   if(error){ toast("Erro ao lançar itens: " + error.message); console.error(error); return; }
 
@@ -1639,6 +1647,44 @@ function renderHistorico(){
   app.innerHTML = html;
 }
 
+const LABEL_EVENTO_TIMELINE = {
+  criada: "🧾 Comanda criada", item_removido: "➖ Item removido",
+  desconto_aplicado: "🏷️ Desconto aplicado", pagamento: "💰 Pagamento",
+  paga: "✅ Comanda paga", fiado: "📒 Virou fiado", excluida: "🗑️ Comanda excluída",
+  mesclada: "🔗 Unificada com outra comanda", separada: "✂️ Itens separados pra outra comanda",
+};
+
+function formatDetalheEventoTimeline(e){
+  const d = e.detalhes || {};
+  if(e.acao === "item_adicionado"){
+    const lista = d.itens || [d];
+    return lista.map(it => `➕ ${escapeHtml(it.descricao||"")}${it.quantidade>1?` x${it.quantidade}`:""} (${fmt((it.valor||0)*(it.quantidade||1))})`).join("<br>");
+  }
+  if(e.acao === "item_removido") return `${escapeHtml(d.descricao||"")} (${fmt(d.valor||0)})`;
+  if(e.acao === "pagamento") return `${LABEL_PAGAMENTO[d.forma]||d.forma||""} · ${fmt(d.valor||0)}`;
+  if(e.acao === "desconto_aplicado") return fmt(d.desconto||0);
+  if(e.acao === "mesclada") return `com "${escapeHtml(d.destino_nome||"")}" (${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"})`;
+  if(e.acao === "separada") return `${d.itens_movidos||0} ${d.itens_movidos===1?"item":"itens"} de "${escapeHtml(d.origem_nome||"")}"`;
+  if(e.acao === "excluida") return `motivo: ${escapeHtml(d.motivo||"-")}`;
+  return "";
+}
+
+function renderLinhaDoTempo(c){
+  if(!linhaDoTempoAberta) return `<button class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="toggleLinhaDoTempo('${c.id}')">🕐 Ver linha do tempo desta comanda</button>`;
+  const html = linhaDoTempoEventos.length ? linhaDoTempoEventos.map(e => `
+    <div class="item-row">
+      <span>${e.acao === "item_adicionado" ? "" : (LABEL_EVENTO_TIMELINE[e.acao] || e.acao) + "<br>"}${formatDetalheEventoTimeline(e)}
+        <span class="muted" style="font-size:11px;display:block;">${fmtDate(e.criado_em)} · ${escapeHtml(e.usuario||"-")}</span>
+      </span>
+    </div>
+  `).join("") : `<div class="muted" style="padding:8px 0;">Nenhum evento registrado ainda.</div>`;
+  return `
+    <div class="muted" style="margin:10px 0 4px;">🕐 Linha do tempo</div>
+    <div class="card" style="padding:8px 12px;max-height:260px;overflow-y:auto;">${html}</div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:6px;" onclick="toggleLinhaDoTempo('${c.id}')">Ocultar linha do tempo</button>
+  `;
+}
+
 function renderBlocoPagamento(c){
   const pagamentosHtml = c.pagamentos.length ? `
     <div class="card" style="padding:8px 12px;margin:8px 0;">
@@ -1837,6 +1883,7 @@ function renderDetailSheet(){
           <span class="total">${fmt(c.total)}</span>
         </div>
         ${actionsHtml}
+        ${renderLinhaDoTempo(c)}
         ${sessaoAtual.role === "admin" ? `<button class="btn btn-danger" style="width:100%;margin-top:8px;" onclick="excluirComanda('${c.id}')">Excluir comanda</button>` : ""}
       </div>
     </div>
@@ -1961,11 +2008,23 @@ window.onAddItem = (comandaId) => {
 window.openDetail = (id) => {
   openComandaId = id; pagamentoStaged = []; dividirPagamentoAberto = false;
   separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
+  linhaDoTempoAberta = false; linhaDoTempoEventos = [];
   renderDetailSheet();
 };
 window.closeDetail = () => {
   openComandaId = null; pagamentoStaged = []; dividirPagamentoAberto = false;
   separarModoAtivo = false; itensSelecionadosSeparar = []; unificarComandaId = null;
+  linhaDoTempoAberta = false; linhaDoTempoEventos = [];
+  renderDetailSheet();
+};
+window.toggleLinhaDoTempo = async (comandaId) => {
+  linhaDoTempoAberta = !linhaDoTempoAberta;
+  if(linhaDoTempoAberta){
+    const { data, error } = await sb.from("auditoria").select("*")
+      .eq("entidade", "comanda").eq("entidade_id", comandaId).order("criado_em", { ascending: true });
+    if(error){ toast("Erro ao carregar linha do tempo"); console.error(error); linhaDoTempoAberta = false; return; }
+    linhaDoTempoEventos = data || [];
+  }
   renderDetailSheet();
 };
 window.removeItem = removeItem;
